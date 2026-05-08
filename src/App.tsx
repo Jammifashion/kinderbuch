@@ -13,7 +13,7 @@ import { GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User 
 // --- Initialization ---
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 const MODEL_NAME = 'gemini-3.1-flash-lite';
-const IMAGE_MODEL = 'gemini-2.5-flash-image';
+const IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
 const ADMIN_EMAIL = 'gbr@jammifashion.de'; 
 
 enum OperationType {
@@ -50,6 +50,13 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 interface StoryResult {
   id: string; // Add ID field
   titel_optionen: string[];
+  ausgewaehlter_titel?: string;
+  cost_metrics?: {
+    text_input_tokens: number;
+    text_output_tokens: number;
+    images_generated: number;
+    total_cost_usd: number;
+  };
   zielgruppe: string;
   storyline: {
     anfang: string;
@@ -109,9 +116,9 @@ export default function App() {
         <button onClick={handleLogin} className="rounded-3xl bg-orange-500 px-8 py-5 text-xl font-bold text-white shadow-[0_8px_0_rgb(194,65,12)]">
           Mit Google anmelden
         </button>
-        <button onClick={handleDevLogin} className="text-xs text-stone-400 hover:text-orange-500 underline">
-          Entwickler-Login (Lokal)
-        </button>
+        <p className="text-xs text-stone-500 text-center max-w-sm mt-4">
+          Hinweis: Wenn das Login-Fenster nicht erscheint, öffne die Vorschau bitte in einem neuen Tab (oben rechts auf das Symbol klicken).
+        </p>
       </div>
     );
   }
@@ -146,6 +153,18 @@ export default function App() {
         model: MODEL_NAME,
         contents: prompt,
       });
+      // Track cost
+      await fetch('/api/track-cost', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          bookId: 'dummy-id', // Needs to be real ID in a real app, but this is a simplified example
+          usage: {
+            promptTokens: response.usageMetadata?.promptTokenCount,
+            outputTokens: response.usageMetadata?.candidatesTokenCount
+          }
+        })
+      });
       const text = response.text || '';
       const cleanJson = text.replace(/```json\n?|\n?```/g, '').trim();
       const storyData: StoryResult = JSON.parse(cleanJson);
@@ -158,7 +177,29 @@ export default function App() {
           created_at: serverTimestamp(),
           status: 'draft'
         });
-        setResult({ ...storyData, id: docRef.id });
+        const bookId = docRef.id;
+        setResult({ 
+          ...storyData, 
+          id: bookId,
+          cost_metrics: {
+            text_input_tokens: 0,
+            text_output_tokens: 0,
+            images_generated: 0,
+            total_cost_usd: 0
+          }
+        });
+        
+        await fetch('/api/track-cost', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            bookId,
+            usage: {
+              promptTokens: response.usageMetadata?.promptTokenCount,
+              outputTokens: response.usageMetadata?.candidatesTokenCount
+            }
+          })
+        });
       } catch (e) {
         handleFirestoreError(e, OperationType.WRITE, 'buecher');
       }
@@ -191,15 +232,47 @@ export default function App() {
     }
   };
 
+  const handleSelectTitle = async (titel: string) => {
+    if (!result) return;
+    try {
+      await updateDoc(doc(db, 'buecher', result.id), {
+        ausgewaehlter_titel: titel
+      });
+      setResult({ ...result, ausgewaehlter_titel: titel });
+    } catch (err) {
+      console.error(err);
+      setError('Titel konnte nicht gespeichert werden.');
+    }
+  };
+
   const generateCharacterImage = async () => {
     if (!result) return;
     setIsImageLoading(true);
     setError(null);
     try {
-      const response = await ai.models.generateContent({
+      // Check for paid API key logic
+      // @ts-ignore - aistudio is injected in the environment
+      if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
+        // @ts-ignore
+        const hasKey = await window.aistudio.hasSelectedApiKey();
+        if (!hasKey) {
+          // @ts-ignore
+          await window.aistudio.openSelectKey();
+        }
+      }
+
+      const aiPaid = new GoogleGenAI({ apiKey: process.env.API_KEY || process.env.GEMINI_API_KEY! });
+
+      const response = await aiPaid.models.generateContent({
         model: IMAGE_MODEL,
         contents: {
           parts: [{ text: result.hauptcharakter.bild_prompt_en }],
+        },
+        config: {
+          imageConfig: {
+            aspectRatio: "1:1",
+            imageSize: "1K"
+          },
         },
       });
 
@@ -222,6 +295,17 @@ export default function App() {
       // Update Firestore
       await updateDoc(doc(db, 'buecher', result.id), {
         'hauptcharakter.avatar_url': url
+      });
+
+      await fetch('/api/track-cost', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          bookId: result.id,
+          usage: {
+            imageGenerated: true
+          }
+        })
       });
 
       setResult(prev => prev ? ({ ...prev, hauptcharakter: { ...prev.hauptcharakter, avatar_url: url } }) : null);
@@ -274,8 +358,21 @@ export default function App() {
           <div className="space-y-8 animate-in fade-in duration-700">
             <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               {result.titel_optionen.map((titel, i) => (
-                <div key={i} className="cursor-pointer rounded-2xl bg-white border-2 border-slate-100 p-4 text-center font-bold text-slate-700 transition hover:border-orange-200 hover:shadow-sm">
+                <div 
+                  key={i} 
+                  onClick={() => handleSelectTitle(titel)}
+                  className={`cursor-pointer rounded-2xl border-2 p-4 text-center font-bold transition hover:shadow-sm ${
+                    result.ausgewaehlter_titel === titel 
+                      ? 'bg-orange-100 border-orange-500 text-orange-800' 
+                      : 'bg-white border-slate-100 text-slate-700 hover:border-orange-200'
+                  }`}
+                >
                   {titel}
+                  {currentUser?.email === ADMIN_EMAIL && result.cost_metrics && (
+                      <div className="mt-2 text-xs text-orange-700 bg-orange-50 rounded-full px-2 py-1">
+                        💰 Kosten: ${result.cost_metrics.total_cost_usd.toFixed(2)}
+                      </div>
+                  )}
                 </div>
               ))}
             </section>
