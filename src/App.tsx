@@ -254,6 +254,16 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (bookConfig.zielalter === '2-4 Jahre' && !['8', '12'].includes(bookConfig.seitenAnzahl.toString())) {
+      setBookConfig(prev => ({ ...prev, seitenAnzahl: 12 }));
+    } else if (bookConfig.zielalter === '4-6 Jahre' && !['12', '16', '24'].includes(bookConfig.seitenAnzahl.toString())) {
+      setBookConfig(prev => ({ ...prev, seitenAnzahl: 16 }));
+    } else if (bookConfig.zielalter === '6-8 Jahre' && !['16', '24'].includes(bookConfig.seitenAnzahl.toString())) {
+      setBookConfig(prev => ({ ...prev, seitenAnzahl: 24 }));
+    }
+  }, [bookConfig.zielalter]);
+
+  useEffect(() => {
     return onAuthStateChanged(auth, (authUser) => {
       setUser(authUser);
       if (authUser?.email === ADMIN_EMAIL) {
@@ -328,6 +338,21 @@ export default function App() {
     setIsLoading(true);
     setError(null);
     try {
+      // PRE-CHECK
+      const safetyPrompt = `Bewerte die folgende Eingabe strikt auf Kindersicherheit. Enthält sie sensible, gewalttätige, beängstigende, drogenbezogene, diskriminierende oder sexuelle Inhalte? Antworte NUR mit "UNSAFE", wenn sie ungeeignet ist, ansonsten mit "SAFE".\nEingabe: "${idea}"`;
+      const safetyRes = await ai.models.generateContent({
+        model: MODEL_NAME,
+        contents: safetyPrompt,
+        config: {
+          systemInstruction: "Du bist ein strenger Jugendschutz-Filter für Kinder von 2 bis 8 Jahren."
+        }
+      });
+      if (safetyRes.text && safetyRes.text.trim().toUpperCase().includes('UNSAFE')) {
+        setError("Ups! Dieser Inhalt ist für ein friedliches Kinderbuch leider nicht geeignet. Lass uns lieber ein schönes, positives Abenteuer erleben! 🌟");
+        setIsLoading(false);
+        return;
+      }
+
       const prompt = `Erstelle basierend auf der Idee: "${idea}" ein Kinderbuch-Konzept. Die Antwort MUSS zwingend ein valides JSON-Objekt sein, das exakt dieser Struktur entspricht (kein Markdown drumherum, keine zusätzlichen Zeichen):
       {
         "titel_optionen": ["...", "...", "..."],
@@ -340,19 +365,11 @@ export default function App() {
       const response = await ai.models.generateContent({
         model: MODEL_NAME,
         contents: prompt,
+        config: {
+          systemInstruction: "UNUMSTÖßLICHE REGEL: Es dürfen ausschließlich jugendfreie, positive und pädagogisch wertvolle Inhalte für Kinder zwischen 2 und 8 Jahren erzeugt werden."
+        }
       });
-      // Track cost
-      await fetch('/api/track-cost', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          bookId: 'dummy-id', // Needs to be real ID in a real app, but this is a simplified example
-          usage: {
-            promptTokens: response.usageMetadata?.promptTokenCount,
-            outputTokens: response.usageMetadata?.candidatesTokenCount
-          }
-        })
-      });
+      // We will track cost after saving to firestore
       const text = response.text || '';
       const cleanJson = text.replace(/```json\n?|\n?```/g, '').trim();
       const storyData: StoryResult = JSON.parse(cleanJson);
@@ -361,6 +378,7 @@ export default function App() {
       try {
         const docRef = await addDoc(collection(db, 'buecher'), {
           ...storyData,
+          erzeugteBuecherCount: 0,
           original_idea: idea,
           created_at: serverTimestamp(),
           status: 'draft'
@@ -377,16 +395,9 @@ export default function App() {
           }
         });
         
-        await fetch('/api/track-cost', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({
-            bookId,
-            usage: {
-              promptTokens: response.usageMetadata?.promptTokenCount,
-              outputTokens: response.usageMetadata?.candidatesTokenCount
-            }
-          })
+        await updateBookCosts(bookId, {
+          promptTokens: response.usageMetadata?.promptTokenCount,
+          outputTokens: response.usageMetadata?.candidatesTokenCount
         });
       } catch (e) {
         handleFirestoreError(e, OperationType.WRITE, 'buecher');
@@ -496,6 +507,13 @@ export default function App() {
     setIsImageLoading(true);
     setError(null);
     try {
+      // 0. PRE-CHECK
+      const safetyPrompt = `Bewerte die folgende Eingabe auf Kindersicherheit. Enthält sie sensible, gewalttätige, beängstigende, drogenbezogene, diskriminierende oder sexuelle Inhalte? Antworte NUR mit "UNSAFE", wenn sie ungeeignet ist, sonst mit "SAFE".\nEingabe: "${prompt}"`;
+      const safetyRes = await ai.models.generateContent({ model: MODEL_NAME, contents: safetyPrompt });
+      if (safetyRes.text && safetyRes.text.trim().toUpperCase().includes('UNSAFE')) {
+        throw new Error("Ups! Dieser Inhalt ist für ein friedliches Kinderbuch leider nicht geeignet. Lass uns lieber ein schönes, positives Abenteuer erleben! 🌟");
+      }
+
       // 1. Paid API key check for AI Studio UI
       if ((window as any).aistudio && typeof (window as any).aistudio.hasSelectedApiKey === 'function') {
         const hasKey = await (window as any).aistudio.hasSelectedApiKey();
@@ -581,13 +599,7 @@ export default function App() {
         throw new Error(`Konnte die URL nicht in Firestore speichern: ${dbErr.message}`);
       }
 
-      // Tracker Info posten (Optional, hier über den /api Endpoint falls der Server doch läuft,
-      // aber wir ignorieren Fehler falls es nur statisch läuft)
-      fetch("/api/track-cost", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bookId, usage: { imageGenerated: true } })
-      }).catch(e => console.log("Tracking-Server nicht erreichbar, übersprungen."));
+      await updateBookCosts(bookId, { imageGenerated: true });
 
       return url;
     } catch (err: any) {
@@ -599,27 +611,144 @@ export default function App() {
     }
   };
 
+  const updateBookCosts = async (bookId: string, usage: { promptTokens?: number, outputTokens?: number, imageGenerated?: boolean }) => {
+    try {
+      const bookRef = doc(db, 'buecher', bookId);
+      const bookSnap = await getDoc(bookRef);
+      if (!bookSnap.exists()) return;
+      const currentMetrics = bookSnap.data()?.cost_metrics || {
+        text_input_tokens: 0,
+        text_output_tokens: 0,
+        images_generated: 0,
+        total_cost_usd: 0
+      };
+
+      const inputTokens = usage.promptTokens || 0;
+      const outputTokens = usage.outputTokens || 0;
+
+      const newMetrics: any = {
+        text_input_tokens: currentMetrics.text_input_tokens + inputTokens,
+        text_output_tokens: currentMetrics.text_output_tokens + outputTokens,
+        images_generated: currentMetrics.images_generated + (usage.imageGenerated ? 1 : 0),
+      };
+
+      newMetrics.total_cost_usd = (newMetrics.text_input_tokens / 1_000_000 * 0.075) + 
+                   (newMetrics.text_output_tokens / 1_000_000 * 0.30) + 
+                   (newMetrics.images_generated * 0.01);
+
+      await updateDoc(bookRef, { cost_metrics: newMetrics });
+    } catch (e) {
+      console.warn("Could not update cost", e);
+    }
+  };
+
   const handleGenerateBook = async () => {
     if (!selectedSkriptForBook) return;
     setIsGeneratingBook(true);
     setError(null);
     try {
-      const response = await fetch(`/api/buecher/${selectedSkriptForBook.id}/erstelle-buch`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${await auth.currentUser?.getIdToken()}`
-        },
-        body: JSON.stringify(bookConfig)
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Fehler beim Erstellen des Buchs");
+      const count = (selectedSkriptForBook.erzeugteBuecherCount || 0);
+      if (count >= 3) {
+          throw new Error("Limit von 3 Büchern pro Kurzskript erreicht.");
+      }
       
+      const { zielalter, stimmung, seitenAnzahl } = bookConfig;
+      let inhaltsdichte = "Mittel";
+      let bildanteil = "Mittel";
+      if (zielalter === "2-4 Jahre") {
+         inhaltsdichte = "Klein (Sehr einfache, kurze Sätze, ca. 1-2 Sätze pro Seite)";
+         bildanteil = "Groß (Bilder dominieren die Seite vollständig)";
+      } else if (zielalter === "4-6 Jahre") {
+         inhaltsdichte = "Mittel (Einfache Sätze, ca. 3-4 Sätze pro Seite)";
+         bildanteil = "Mittel (Bilder und Text sind ausgewogen)";
+      } else if (zielalter === "6-8 Jahre") {
+         inhaltsdichte = "Groß (Längere Sätze, somewhat komplexere Struktur, ca. 4-6 Sätze pro Seite)";
+         bildanteil = "Klein (Text hat mehr Gewicht, Bilder untermalen die Geschichte)";
+      }
+
+      const promptStr = `
+Du bist ein professioneller Kinderbuchautor. Mache aus dem folgenden Kurzskript ein vollständiges Buch, formatiert als JSON.
+Die Parameter:
+Zielalter: ${zielalter}
+Stimmung: ${stimmung}
+Seiten: ${seitenAnzahl}
+Inhaltsdichte: ${inhaltsdichte}
+Bildanteil: ${bildanteil}
+
+Charakter: ${JSON.stringify(selectedSkriptForBook.hauptcharakter)}
+Storyline: ${JSON.stringify(selectedSkriptForBook.storyline)}
+
+Teile die Storyline auf EXAKT ${seitenAnzahl} Seiten auf. Passe den Wortschatz an das Zielalter und den Schreibstil an die Stimmung an (z.B. "lustig" = humorvoll, "träumerisch" = sanfte Sprache). Berücksichtige zwingend die Inhaltsdichte!
+
+VISUELLE KONSISTENZ: Analysiere für jede Seite separat, ob der Hauptcharakter in dieser spezifischen Szene vorkommen MUSS.
+- Wenn JA: Injiziere seine Charakterbeschreibung ("${selectedSkriptForBook.hauptcharakter?.aussehen_de}") prominent in den englischen 'imagePrompt'.
+- Wenn NEIN: Generiere ein reines Szenen-Bild (ohne den Hauptcharakter), das exakt denselben künstlerischen Stil nutzt.
+
+HÄNGE AN JEDEN imagePrompt DIESEN ANTI-TEXT-RIEGEL AN:
+", absolutely no text, no letters, no words, no typography, no signatures, clean character digital art style, perfect illustration"
+
+Dein Output MUSS exakt dieses JSON-Format haben:
+{
+  "titel": "Kreativer Titel des Buchs",
+  "seiten": [
+    {
+      "pageNumber": 1,
+      "text": "Der Text für diese Seite...",
+      "imagePrompt": "Der Bild-Prompt auf Englisch..."
+    }
+  ]
+}
+`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.1-pro-preview',
+        contents: {
+          parts: [{ text: promptStr }],
+        },
+        config: {
+          responseMimeType: "application/json",
+          systemInstruction: "UNUMSTÖßLICHE REGEL: Es dürfen ausschließlich jugendfreie, positive und pädagogisch wertvolle Inhalte für Kinder zwischen 2 und 8 Jahren erzeugt werden."
+        }
+      });
+      
+      await updateBookCosts(selectedSkriptForBook.id, {
+        promptTokens: response.usageMetadata?.promptTokenCount,
+        outputTokens: response.usageMetadata?.candidatesTokenCount
+      });
+
+      let txt = response.text || "{}";
+      if (txt.startsWith('\`\`\`json')) txt = txt.slice(7);
+      else if (txt.startsWith('\`\`\`')) txt = txt.slice(3);
+      if (txt.endsWith('\`\`\`')) txt = txt.slice(0, -3);
+      txt = txt.trim();
+
+      const parsed = JSON.parse(txt);
+      
+      const newBookData = {
+        skriptId: selectedSkriptForBook.id,
+        titel: parsed.titel || "Neues Buch",
+        zielalter,
+        stimmung,
+        seitenAnzahl,
+        seiten: parsed.seiten || [],
+        coverImage: selectedSkriptForBook.hauptcharakter?.avatar_url || null,
+        isFavorite: false,
+        labels: [],
+        createdByUser: currentUser?.email,
+        created_at: serverTimestamp()
+      };
+      
+      await addDoc(collection(db, 'ausgearbeitete_buecher'), newBookData);
+      
+      const newCount = count + 1;
+      await updateDoc(doc(db, 'buecher', selectedSkriptForBook.id), { erzeugteBuecherCount: newCount });
+
       setSelectedSkriptForBook(null);
       setActiveTab('books');
       fetchBooks();
       fetchFinishedBooks();
     } catch (err: any) {
+      console.error(err);
       setError(err.message);
     } finally {
       setIsGeneratingBook(false);
@@ -691,7 +820,7 @@ export default function App() {
                 </section>
                 
                 <section className="rounded-[40px] bg-white p-8 shadow-md border-2 border-slate-100">
-                  <h2 className="mb-6 text-2xl font-bold text-slate-800">Story kurz Skript</h2>
+                  <h2 className="mb-6 text-2xl font-bold text-slate-800">Story Kurzskript</h2>
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                     <div className="rounded-3xl bg-yellow-50 p-6 border border-yellow-100">
                       <h3 className="text-xs font-bold uppercase tracking-widest text-yellow-600 mb-2">Anfang</h3>
@@ -791,7 +920,12 @@ export default function App() {
                   {currentUser?.email === ADMIN_EMAIL && book.cost_metrics && <span>💰 ${book.cost_metrics.total_cost_usd.toFixed(2)}</span>}
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => setSelectedSkriptForBook(book)} className="flex-[2] bg-indigo-500 text-white py-2 rounded-full font-bold hover:bg-indigo-600 transition-colors shadow-sm cursor-pointer border border-indigo-400">📖 Buch erzeugen</button>
+                  <button 
+                    onClick={() => setSelectedSkriptForBook(book)} 
+                    disabled={(book.erzeugteBuecherCount || 0) >= 3}
+                    className="flex-[2] bg-indigo-500 text-white py-2 rounded-full font-bold hover:bg-indigo-600 transition-colors shadow-sm cursor-pointer border border-indigo-400 disabled:opacity-50 disabled:cursor-not-allowed">
+                    {(book.erzeugteBuecherCount || 0) >= 3 ? "Limit erreicht (3/3)" : "📖 Buch erzeugen"}
+                  </button>
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => setEditingBook(book)} className="flex-1 bg-slate-100 text-slate-700 py-2 rounded-full font-bold hover:bg-slate-200 cursor-pointer transition-colors">Bearbeiten</button>
