@@ -66,9 +66,23 @@ interface AusgearbeitetesBuch {
   created_at: any;
   coverImage?: string;
   isFavorite?: boolean;
-  labels?: string[];
+  labelId?: string | null;
   createdByUser?: string;
 }
+
+export type CustomLabel = {
+  id: string;
+  name: string;
+  colorClass: string;
+};
+
+export const DEFAULT_LABELS: CustomLabel[] = [
+  { id: '1', name: 'Sternchen', colorClass: 'bg-yellow-100 text-yellow-800' },
+  { id: '2', name: 'Wichtig', colorClass: 'bg-red-100 text-red-800' },
+  { id: '3', name: 'Spaß', colorClass: 'bg-green-100 text-green-800' },
+  { id: '4', name: 'Lernen', colorClass: 'bg-blue-100 text-blue-800' },
+  { id: '5', name: 'Familie', colorClass: 'bg-purple-100 text-purple-800' }
+];
 
 interface StoryResult {
   id: string; // Add ID field
@@ -232,6 +246,7 @@ export default function App() {
   const [editingBook, setEditingBook] = useState<StoryResult | null>(null);
   const [selectedBooks, setSelectedBooks] = useState<Set<string>>(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | 'selected' | null>(null);
+  const [showDeleteFinishedConfirm, setShowDeleteFinishedConfirm] = useState<string | null>(null);
   
   const [allFinishedBooks, setAllFinishedBooks] = useState<AusgearbeitetesBuch[]>([]);
   const [selectedSkriptForBook, setSelectedSkriptForBook] = useState<StoryResult | null>(null);
@@ -242,6 +257,22 @@ export default function App() {
   const [editingText, setEditingText] = useState<string>('');
   const [touchStart, setTouchStart] = useState<number | null>(null);
   const [showOnlyFavorites, setShowOnlyFavorites] = useState(false);
+  const [activeLabelFilter, setActiveLabelFilter] = useState<string | null>(null);
+  
+  // Custom Labels
+  const [customLabels, setCustomLabels] = useState<CustomLabel[]>(() => {
+    const saved = localStorage.getItem('jammi_custom_labels');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) {}
+    }
+    return DEFAULT_LABELS;
+  });
+  const [isEditingLabels, setIsEditingLabels] = useState(false);
+  const [editingCustomLabels, setEditingCustomLabels] = useState<CustomLabel[]>([...customLabels]);
+
+  useEffect(() => {
+    localStorage.setItem('jammi_custom_labels', JSON.stringify(customLabels));
+  }, [customLabels]);
 
   const handleTouchStart = (e: React.TouchEvent) => {
     setTouchStart(e.targetTouches[0].clientX);
@@ -550,6 +581,17 @@ export default function App() {
     setShowDeleteConfirm(null);
   };
 
+  const confirmDeleteFinishedBook = async () => {
+    if (!showDeleteFinishedConfirm) return;
+    try {
+      await deleteDoc(doc(db, 'ausgearbeitete_buecher', showDeleteFinishedConfirm));
+      setAllFinishedBooks(prev => prev.filter(b => b.id !== showDeleteFinishedConfirm));
+    } catch (err: any) {
+      handleFirestoreError(err, OperationType.DELETE, `ausgearbeitete_buecher/${showDeleteFinishedConfirm}`);
+    }
+    setShowDeleteFinishedConfirm(null);
+  };
+
   const generateCharacterImage = async (bookId: string, prompt: string, oldUrl?: string) => {
     setIsImageLoading(true);
     setError(null);
@@ -818,7 +860,7 @@ Dein Output MUSS exakt dieses JSON-Format haben:
         seiten: pages,
         coverImage: selectedSkriptForBook.hauptcharakter?.avatar_url || null,
         isFavorite: false,
-        labels: [],
+        labelId: null,
         createdByUser: currentUser?.email,
         created_at: serverTimestamp()
       };
@@ -839,6 +881,27 @@ Dein Output MUSS exakt dieses JSON-Format haben:
       setIsGeneratingBook(false);
     }
   };
+
+  const handleSetLabel = async (book: AusgearbeitetesBuch, labelId: string | null) => {
+    try {
+      const bookRef = doc(db, 'ausgearbeitete_buecher', book.id);
+      
+      // If clicking the same label, remove it (toggle off)
+      const newLabelId = book.labelId === labelId ? null : labelId;
+      
+      await updateDoc(bookRef, { labelId: newLabelId });
+      setAllFinishedBooks(prev => prev.map(b => b.id === book.id ? { ...b, labelId: newLabelId } : b));
+    } catch (e: any) {
+      console.error("Error setting label: ", e);
+      alert("Fehler beim Setzen des Labels: " + e.message);
+    }
+  };
+
+  const filteredFinishedBooks = allFinishedBooks.filter(b => {
+    if (showOnlyFavorites && !b.isFavorite) return false;
+    if (activeLabelFilter && b.labelId !== activeLabelFilter) return false;
+    return true;
+  });
 
   return (
     <div className="min-h-screen bg-[#FFFDF2] p-6 font-sans text-slate-800">
@@ -1021,7 +1084,7 @@ Dein Output MUSS exakt dieses JSON-Format haben:
           </div>
         ) : activeTab === 'books' ? (
           <div className="flex flex-col gap-6">
-            <div className="flex justify-between items-center bg-white p-4 rounded-[24px] shadow-sm border border-slate-100">
+            <div className="flex justify-between items-center bg-white p-4 rounded-[24px] shadow-sm border border-slate-100 flex-wrap gap-4">
               <label className="flex items-center gap-3 font-bold text-slate-700 cursor-pointer">
                 <input 
                   type="checkbox" 
@@ -1031,19 +1094,49 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                 />
                 ❤️ Nur Favoriten anzeigen
               </label>
+              {activeLabelFilter && (() => {
+                const activeCfg = customLabels.find(l => l.id === activeLabelFilter);
+                return (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-slate-500 font-medium">Filter:</span>
+                    <span className={`text-sm font-bold px-3 py-1 rounded-full flex items-center gap-2 shadow-sm ${activeCfg?.colorClass || 'bg-slate-100 text-slate-800'}`}>
+                      {activeCfg?.name || activeLabelFilter}
+                      <button 
+                        onClick={() => setActiveLabelFilter(null)}
+                        className="opacity-70 hover:opacity-100 rounded-full w-4 h-4 flex items-center justify-center transition-opacity"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  </div>
+                );
+              })()}
+              <button 
+                onClick={() => setIsEditingLabels(true)}
+                className="text-sm font-medium text-slate-500 hover:text-indigo-600 bg-slate-50 hover:bg-indigo-50 px-3 py-1.5 rounded-full transition-colors flex items-center gap-2"
+              >
+                🏷️ Labels anpassen
+              </button>
             </div>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {allFinishedBooks.filter(b => showOnlyFavorites ? b.isFavorite : true).length === 0 && (
+              {filteredFinishedBooks.length === 0 && (
                 <p className="text-slate-500 col-span-2 text-center py-12">Noch keine {showOnlyFavorites ? 'favorisierten ' : ''}Bücher vorhanden.</p>
               )}
-              {allFinishedBooks.filter(b => showOnlyFavorites ? b.isFavorite : true).map(book => (
+              {filteredFinishedBooks.map(book => (
                 <div key={book.id} className="relative rounded-[30px] bg-white p-6 shadow-sm border border-slate-100 flex flex-col gap-4 cursor-pointer hover:shadow-md transition-shadow" onClick={() => setReadingBook(book)}>
                   <button 
                     onClick={(e) => handleToggleFavorite(e, book)} 
                     className="absolute top-8 right-8 z-10 w-10 h-10 bg-white/80 backdrop-blur-md rounded-full flex items-center justify-center text-xl shadow-sm hover:scale-110 transition-transform cursor-pointer"
                   >
                     {book.isFavorite ? '❤️' : '🤍'}
+                  </button>
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); setShowDeleteFinishedConfirm(book.id); }} 
+                    className="absolute top-8 left-8 z-10 w-10 h-10 bg-white/80 backdrop-blur-md rounded-full flex items-center justify-center text-xl shadow-sm hover:scale-110 hover:bg-red-50 transition-all cursor-pointer"
+                    title="Buch löschen"
+                  >
+                    🗑️
                   </button>
                   <img src={book.coverImage || ''} alt="Cover" className="w-full h-48 object-cover rounded-2xl bg-amber-50" />
                   <h3 className="font-bold text-xl text-slate-800">{book.titel}</h3>
@@ -1052,13 +1145,33 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                     <span className="bg-pink-100 text-pink-800 text-xs font-bold px-2 py-1 rounded-md">{book.stimmung}</span>
                     <span className="bg-slate-100 text-slate-600 text-xs font-bold px-2 py-1 rounded-md">{book.seitenAnzahl} Seiten</span>
                   </div>
-                  {(book.labels && book.labels.length > 0) && (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {book.labels.map((label, idx) => (
-                        <span key={idx} className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full">{label}</span>
-                      ))}
+                  <div className="flex items-center gap-2 mt-2 pt-4 border-t border-slate-50">
+                    <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Label:</span>
+                    <div className="flex gap-2">
+                      {customLabels.map(l => {
+                        const isActive = book.labelId === l.id;
+                        return (
+                          <button
+                            key={l.id}
+                            onClick={(e) => { e.stopPropagation(); handleSetLabel(book, l.id); }}
+                            title={l.name}
+                            className={`w-6 h-6 rounded-full transition-all border-2 ${isActive ? l.colorClass + ' border-transparent scale-110 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                          />
+                        );
+                      })}
                     </div>
-                  )}
+                    {book.labelId && (() => {
+                      const activeLabel = customLabels.find(l => l.id === book.labelId);
+                      return activeLabel ? (
+                        <span 
+                          onClick={(e) => { e.stopPropagation(); setActiveLabelFilter(book.labelId); }}
+                          className={`ml-auto text-[10px] font-bold px-3 py-1 rounded-full cursor-pointer transition-colors shadow-sm ${activeLabel.colorClass} hover:opacity-80`}
+                        >
+                          {activeLabel.name}
+                        </span>
+                      ) : null;
+                    })()}
+                  </div>
                 </div>
               ))}
             </div>
@@ -1162,6 +1275,30 @@ Dein Output MUSS exakt dieses JSON-Format haben:
             <div className="flex gap-4">
               <button onClick={() => setShowDeleteConfirm(null)} className="flex-1 rounded-full bg-slate-100 py-3 font-bold text-slate-700 hover:bg-slate-200 cursor-pointer">Abbrechen</button>
               <button onClick={confirmDelete} className="flex-1 rounded-full bg-red-500 py-3 font-bold text-white shadow-[0_4px_0_rgb(153,27,27)] hover:bg-red-600 active:translate-y-1 active:shadow-none cursor-pointer">Löschen</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Finished Book Confirmation Modal */}
+      {showDeleteFinishedConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm rounded-[32px] bg-white p-8 shadow-2xl">
+            <h3 className="mb-4 text-2xl font-bold text-slate-800">Wirklich löschen?</h3>
+            <p className="mb-8 text-slate-600">Möchtest du dieses fertige Buch wirklich dauerhaft löschen?</p>
+            <div className="flex gap-4">
+              <button 
+                onClick={() => setShowDeleteFinishedConfirm(null)} 
+                className="flex-1 rounded-full bg-slate-100 py-3 font-bold text-slate-700 hover:bg-slate-200 cursor-pointer transition-colors"
+              >
+                Abbrechen
+              </button>
+              <button 
+                onClick={confirmDeleteFinishedBook} 
+                className="flex-[1] bg-red-500 text-white font-bold py-3 rounded-full hover:bg-red-600 transition shadow-[0_4px_0_rgb(153,27,27)] active:translate-y-1 active:shadow-none cursor-pointer"
+              >
+                Löschen
+              </button>
             </div>
           </div>
         </div>
@@ -1413,6 +1550,54 @@ Dein Output MUSS exakt dieses JSON-Format haben:
           </div>
         </div>
       )}
+      
+      {/* Label Edit Modal */}
+      {isEditingLabels && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-[32px] p-8 w-full max-w-sm shadow-2xl relative">
+            <h2 className="text-2xl font-bold text-slate-800 mb-6">Labels anpassen</h2>
+            <div className="flex flex-col gap-4">
+              {editingCustomLabels.map((l, i) => (
+                <div key={l.id} className="flex flex-col gap-1">
+                  <div className={`w-full h-2 rounded-t-md ${l.colorClass.split(' ')[0]}`} />
+                  <input 
+                    type="text" 
+                    value={l.name}
+                    onChange={(e) => {
+                      const newLabels = [...editingCustomLabels];
+                      newLabels[i].name = e.target.value;
+                      setEditingCustomLabels(newLabels);
+                    }}
+                    className={`w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-b-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-bold ${l.colorClass.split(' ')[1]}`}
+                    placeholder="Label Name..."
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="mt-8 flex gap-4">
+              <button 
+                onClick={() => {
+                  setEditingCustomLabels([...customLabels]);
+                  setIsEditingLabels(false);
+                }}
+                className="flex-1 py-3 text-slate-500 font-bold hover:bg-slate-100 rounded-xl transition cursor-pointer"
+              >
+                Abbrechen
+              </button>
+              <button 
+                onClick={() => {
+                  setCustomLabels([...editingCustomLabels]);
+                  setIsEditingLabels(false);
+                }}
+                className="flex-[2] bg-indigo-500 text-white font-bold py-3 rounded-xl hover:bg-indigo-600 transition shadow-sm cursor-pointer"
+              >
+                Speichern
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
