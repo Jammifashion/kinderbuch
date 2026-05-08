@@ -3,14 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { GoogleGenAI } from '@google/genai';
-import { db } from './lib/firebase';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { db, auth, storage } from './lib/firebase';
+import { collection, addDoc, serverTimestamp, getDocs, updateDoc, doc } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
 
 // --- Initialization ---
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 const MODEL_NAME = 'gemini-3.1-flash-lite';
+const IMAGE_MODEL = 'gemini-2.5-flash-image';
+const ADMIN_EMAIL = 'gbr@jammifashion.de'; 
 
 enum OperationType {
   CREATE = 'create',
@@ -34,7 +38,7 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: 'unknown',
+      userId: auth.currentUser?.uid,
     },
     operationType,
     path
@@ -44,6 +48,7 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 }
 
 interface StoryResult {
+  id: string; // Add ID field
   titel_optionen: string[];
   zielgruppe: string;
   storyline: {
@@ -64,15 +69,66 @@ interface StoryResult {
     persoenlichkeit: string;
     aussehen_de: string;
     bild_prompt_en: string;
+    avatar_url?: string;
   };
 }
 
 export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [isDevMode, setIsDevMode] = useState(false);
   const [idea, setIdea] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isImageLoading, setIsImageLoading] = useState(false);
   const [result, setResult] = useState<StoryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    return onAuthStateChanged(auth, (authUser) => {
+      setUser(authUser);
+    });
+  }, []);
+
+  const handleLogin = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (err) {
+      setError('Login fehlgeschlagen. Bitte versuche es noch einmal.');
+    }
+  };
+
+  const handleDevLogin = () => {
+    setIsDevMode(true);
+  };
+
+  const currentUser = isDevMode ? { email: ADMIN_EMAIL, uid: 'dev-user' } : user;
+
+  if (!currentUser) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center bg-[#FFFDF2] gap-4">
+        <button onClick={handleLogin} className="rounded-3xl bg-orange-500 px-8 py-5 text-xl font-bold text-white shadow-[0_8px_0_rgb(194,65,12)]">
+          Mit Google anmelden
+        </button>
+        <button onClick={handleDevLogin} className="text-xs text-stone-400 hover:text-orange-500 underline">
+          Entwickler-Login (Lokal)
+        </button>
+      </div>
+    );
+  }
+
+  if (currentUser.email !== ADMIN_EMAIL) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#FFFDF2] p-6 text-center">
+        <div className="rounded-[40px] bg-white p-10 shadow-xl">
+          <h1 className="text-3xl font-bold text-orange-600">Zutritt verweigert</h1>
+          <p className="mt-4 text-slate-500">Du hast leider keine Berechtigung für diese App.</p>
+          <button onClick={() => { signOut(auth); setIsDevMode(false); }} className="mt-6 rounded-full bg-slate-200 px-6 py-2">Ausloggen</button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- Handlers ---
   const handleGenerate = async () => {
     setIsLoading(true);
     setError(null);
@@ -96,17 +152,17 @@ export default function App() {
 
       // Save to Firestore
       try {
-        await addDoc(collection(db, 'buecher'), {
+        const docRef = await addDoc(collection(db, 'buecher'), {
           ...storyData,
           original_idea: idea,
           created_at: serverTimestamp(),
           status: 'draft'
         });
+        setResult({ ...storyData, id: docRef.id });
       } catch (e) {
         handleFirestoreError(e, OperationType.WRITE, 'buecher');
       }
 
-      setResult(storyData);
     } catch (err: any) {
       console.error('Error generating story:', err);
       try {
@@ -120,13 +176,74 @@ export default function App() {
     }
   };
 
+  const handleDownloadBackup = async () => {
+    try {
+      const querySnapshot = await getDocs(collection(db, 'buecher'));
+      const data = querySnapshot.docs.map(doc => doc.data());
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `backup_${new Date().toISOString()}.json`;
+      a.click();
+    } catch (err) {
+      setError('Backup konnte nicht erstellt werden.');
+    }
+  };
+
+  const generateCharacterImage = async () => {
+    if (!result) return;
+    setIsImageLoading(true);
+    setError(null);
+    try {
+      const response = await ai.models.generateContent({
+        model: IMAGE_MODEL,
+        contents: {
+          parts: [{ text: result.hauptcharakter.bild_prompt_en }],
+        },
+      });
+
+      let base64Image = '';
+      for (const part of response.candidates[0].content.parts) {
+        if (part.inlineData) {
+          base64Image = part.inlineData.data;
+          break;
+        }
+      }
+
+      if (!base64Image) throw new Error('Bild konnte nicht generiert werden.');
+
+      // Upload to Storage
+      const storageRef = ref(storage, `buecher/${result.id}/charakter_avatar.png`);
+      const blob = await fetch(`data:image/png;base64,${base64Image}`).then(r => r.blob());
+      await uploadBytes(storageRef, blob);
+      const url = await getDownloadURL(storageRef);
+
+      // Update Firestore
+      await updateDoc(doc(db, 'buecher', result.id), {
+        'hauptcharakter.avatar_url': url
+      });
+
+      setResult(prev => prev ? ({ ...prev, hauptcharakter: { ...prev.hauptcharakter, avatar_url: url } }) : null);
+    } catch (err) {
+      console.error(err);
+      setError('Bildgenerierung oder Upload fehlgeschlagen.');
+    } finally {
+      setIsImageLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#FFFDF2] p-6 font-sans text-slate-800">
-      <header className="mb-10 text-center">
+      <header className="mb-10 flex items-center justify-between">
         <h1 className="text-4xl font-bold tracking-tight text-orange-600">Kinderbuch Zauber</h1>
-        <p className="text-lg text-slate-500">Verwandle deine Idee in ein Abenteuer!</p>
+        <div className="flex gap-4">
+          <button onClick={handleDownloadBackup} className="rounded-full bg-slate-100 px-6 py-3 font-bold text-slate-700">Backup laden</button>
+          <button onClick={() => { signOut(auth); setIsDevMode(false); }} className="rounded-full bg-slate-800 px-6 py-3 font-bold text-white">Ausloggen</button>
+        </div>
       </header>
-
+      
+      {/* ... (rest of the UI, modified to add image generation button) */}
       <main className="mx-auto max-w-3xl">
         <div className="mb-8 rounded-[40px] bg-white p-8 shadow-xl border-4 border-orange-50">
           <textarea
@@ -189,8 +306,17 @@ export default function App() {
                   <p className="text-sm text-green-700"><strong>Persönlichkeit:</strong> {result.hauptcharakter.persoenlichkeit}</p>
                   <p className="mt-2 text-sm text-green-900 italic">{result.hauptcharakter.aussehen_de}</p>
                 </div>
-                <div id="characterImagePlaceholder" className="flex-none w-48 h-48 rounded-2xl bg-white flex items-center justify-center text-slate-400 border-dashed border-4 border-slate-200">
-                  KI-Held Bild
+                <div id="characterImagePlaceholder" className="flex-none w-48 h-48 rounded-2xl bg-white flex items-center justify-center text-slate-400 border-dashed border-4 border-slate-200 overflow-hidden">
+                  {isImageLoading ? (
+                    <div className="flex flex-col items-center">
+                      <div className="animate-spin text-4xl mb-2">⏳</div>
+                      <p className="text-[10px] text-center px-1">Nano Banana 2 zeichnet {result.hauptcharakter.name}...</p>
+                    </div>
+                  ) : result.hauptcharakter.avatar_url ? (
+                    <img src={result.hauptcharakter.avatar_url} alt="Held" className="w-full h-full object-cover" />
+                  ) : (
+                    <button onClick={generateCharacterImage} className="text-xs text-center p-2">Charakterbild generieren</button>
+                  )}
                 </div>
               </div>
             </section>
@@ -200,3 +326,4 @@ export default function App() {
     </div>
   );
 }
+

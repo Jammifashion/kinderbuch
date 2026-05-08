@@ -1,12 +1,9 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Nur DU hast Zugriff auf die gesamte Datenbank
     match /{document=**} {
-      allow read, write: if false;
-    }
-    
-    match /buecher/{bookId} {
-      allow create, read, update, delete: if true;
+      allow read, write: if request.auth != null && request.auth.token.email == "gbr@jammifashion.de";
     }
   }
 }
