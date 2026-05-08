@@ -64,6 +64,9 @@ interface AusgearbeitetesBuch {
   seiten: BookPage[];
   created_at: any;
   coverImage?: string;
+  isFavorite?: boolean;
+  labels?: string[];
+  createdByUser?: string;
 }
 
 interface StoryResult {
@@ -233,7 +236,10 @@ export default function App() {
   const [bookConfig, setBookConfig] = useState({ zielalter: '4-6 Jahre', stimmung: 'Lustig', seitenAnzahl: 12 });
   const [readingBook, setReadingBook] = useState<AusgearbeitetesBuch | null>(null);
   const [currentReadingPage, setCurrentReadingPage] = useState(0);
+  const [editingPageIdx, setEditingPageIdx] = useState<number | null>(null);
+  const [editingText, setEditingText] = useState<string>('');
   const [touchStart, setTouchStart] = useState<number | null>(null);
+  const [showOnlyFavorites, setShowOnlyFavorites] = useState(false);
 
   const handleTouchStart = (e: React.TouchEvent) => {
     setTouchStart(e.targetTouches[0].clientX);
@@ -335,10 +341,22 @@ export default function App() {
 
   // --- Handlers ---
   const handleGenerate = async () => {
+    if (!idea.trim()) return;
     setIsLoading(true);
     setError(null);
     try {
-      // PRE-CHECK
+      // 0. LOCAL KEYWORD PRE-CHECK
+      const blockedKeywords = ['tod', 'blut', 'mord', 'töten', 'krieg', 'gewalt', 'sex', 'porno', 'droge', 'waffe', 'schießen', 'sterben', 'schlagen', 'hassen'];
+      const ideaLower = idea.toLowerCase();
+      const hasBlockedWord = blockedKeywords.some(word => ideaLower.includes(word));
+      
+      if (hasBlockedWord) {
+        setError("Ups! Das ist ein bisschen zu wild für ein friedliches Kinderbuch... Lass uns lieber ein schönes, positives Abenteuer erleben! 🌟");
+        setIsLoading(false);
+        return;
+      }
+
+      // 1. AI PRE-CHECK
       const safetyPrompt = `Bewerte die folgende Eingabe strikt auf Kindersicherheit. Enthält sie sensible, gewalttätige, beängstigende, drogenbezogene, diskriminierende oder sexuelle Inhalte? Antworte NUR mit "UNSAFE", wenn sie ungeeignet ist, ansonsten mit "SAFE".\nEingabe: "${idea}"`;
       const safetyRes = await ai.models.generateContent({
         model: MODEL_NAME,
@@ -463,6 +481,33 @@ export default function App() {
 
   const handleDeleteBook = (bookId: string) => {
     setShowDeleteConfirm(bookId);
+  };
+
+  const handleToggleFavorite = async (e: React.MouseEvent, book: AusgearbeitetesBuch) => {
+    e.stopPropagation();
+    try {
+      const isFav = !book.isFavorite;
+      await updateDoc(doc(db, 'ausgearbeitete_buecher', book.id), { isFavorite: isFav });
+      setAllFinishedBooks(prev => prev.map(b => b.id === book.id ? { ...b, isFavorite: isFav } : b));
+    } catch (err: any) {
+      console.error(err);
+    }
+  };
+
+  const handleSavePageText = async (idx: number) => {
+    if (!readingBook) return;
+    try {
+      const newSeiten = [...readingBook.seiten];
+      newSeiten[idx] = { ...newSeiten[idx], text: editingText };
+      
+      await updateDoc(doc(db, 'ausgearbeitete_buecher', readingBook.id), { seiten: newSeiten });
+      setReadingBook({ ...readingBook, seiten: newSeiten });
+      setAllFinishedBooks(prev => prev.map(b => b.id === readingBook.id ? { ...b, seiten: newSeiten } : b));
+      setEditingPageIdx(null);
+    } catch (err: any) {
+      console.error(err);
+      alert("Fehler beim Speichern des Textes.");
+    }
   };
 
   const handleDeleteSelected = () => {
@@ -935,21 +980,48 @@ Dein Output MUSS exakt dieses JSON-Format haben:
             ))}
           </div>
         ) : activeTab === 'books' ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {allFinishedBooks.length === 0 && (
-              <p className="text-slate-500 col-span-2 text-center py-12">Noch keine fertigen Bücher vorhanden.</p>
-            )}
-            {allFinishedBooks.map(book => (
-              <div key={book.id} className="relative rounded-[30px] bg-white p-6 shadow-sm border border-slate-100 flex flex-col gap-4 cursor-pointer hover:shadow-md transition-shadow" onClick={() => setReadingBook(book)}>
-                <img src={book.coverImage || ''} alt="Cover" className="w-full h-48 object-cover rounded-2xl bg-amber-50" />
-                <h3 className="font-bold text-xl text-slate-800">{book.titel}</h3>
-                <div className="flex flex-wrap gap-2">
-                  <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-2 py-1 rounded-md">{book.zielalter}</span>
-                  <span className="bg-pink-100 text-pink-800 text-xs font-bold px-2 py-1 rounded-md">{book.stimmung}</span>
-                  <span className="bg-slate-100 text-slate-600 text-xs font-bold px-2 py-1 rounded-md">{book.seitenAnzahl} Seiten</span>
+          <div className="flex flex-col gap-6">
+            <div className="flex justify-between items-center bg-white p-4 rounded-[24px] shadow-sm border border-slate-100">
+              <label className="flex items-center gap-3 font-bold text-slate-700 cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  checked={showOnlyFavorites} 
+                  onChange={(e) => setShowOnlyFavorites(e.target.checked)}
+                  className="w-5 h-5 rounded text-indigo-500 focus:ring-indigo-500 border-slate-300"
+                />
+                ❤️ Nur Favoriten anzeigen
+              </label>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {allFinishedBooks.filter(b => showOnlyFavorites ? b.isFavorite : true).length === 0 && (
+                <p className="text-slate-500 col-span-2 text-center py-12">Noch keine {showOnlyFavorites ? 'favorisierten ' : ''}Bücher vorhanden.</p>
+              )}
+              {allFinishedBooks.filter(b => showOnlyFavorites ? b.isFavorite : true).map(book => (
+                <div key={book.id} className="relative rounded-[30px] bg-white p-6 shadow-sm border border-slate-100 flex flex-col gap-4 cursor-pointer hover:shadow-md transition-shadow" onClick={() => setReadingBook(book)}>
+                  <button 
+                    onClick={(e) => handleToggleFavorite(e, book)} 
+                    className="absolute top-8 right-8 z-10 w-10 h-10 bg-white/80 backdrop-blur-md rounded-full flex items-center justify-center text-xl shadow-sm hover:scale-110 transition-transform cursor-pointer"
+                  >
+                    {book.isFavorite ? '❤️' : '🤍'}
+                  </button>
+                  <img src={book.coverImage || ''} alt="Cover" className="w-full h-48 object-cover rounded-2xl bg-amber-50" />
+                  <h3 className="font-bold text-xl text-slate-800">{book.titel}</h3>
+                  <div className="flex flex-wrap gap-2">
+                    <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-2 py-1 rounded-md">{book.zielalter}</span>
+                    <span className="bg-pink-100 text-pink-800 text-xs font-bold px-2 py-1 rounded-md">{book.stimmung}</span>
+                    <span className="bg-slate-100 text-slate-600 text-xs font-bold px-2 py-1 rounded-md">{book.seitenAnzahl} Seiten</span>
+                  </div>
+                  {(book.labels && book.labels.length > 0) && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {book.labels.map((label, idx) => (
+                        <span key={idx} className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full">{label}</span>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         ) : null}
       </main>
@@ -1178,13 +1250,20 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                 
                 if (!isRendered) return null;
 
+                const age = readingBook.zielalter || '';
+                const layoutStyles = {
+                  '2-4 Jahre': { img: 'flex-[4]', txt: 'flex-1' },
+                  '4-6 Jahre': { img: 'flex-[13]', txt: 'flex-[7]' },
+                  '6-8 Jahre': { img: 'flex-1', txt: 'flex-1' },
+                }[age] || { img: 'flex-[2]', txt: 'flex-1' };
+
                 return (
                   <div 
                     key={idx} 
-                    className="absolute w-full h-[85%] px-4 md:px-8 flex flex-col transition-transform duration-300 ease-in-out"
+                    className="absolute w-full h-[85%] px-4 md:px-8 flex flex-col md:flex-row transition-transform duration-300 ease-in-out"
                     style={{ transform: `translateX(${translatePercent}%)`, opacity: isActive ? 1 : 0.3 }}
                   >
-                    <div className="flex-[3] bg-white rounded-t-[32px] overflow-hidden flex items-center justify-center relative shadow-xl">
+                    <div className={`${layoutStyles.img} bg-white rounded-t-[32px] md:rounded-l-[32px] md:rounded-tr-none overflow-hidden flex items-center justify-center relative shadow-xl`}>
                       {seite.imageUrl ? (
                         <img src={seite.imageUrl} alt={`Seite ${idx + 1}`} className="w-full h-full object-cover" loading="lazy" />
                       ) : (
@@ -1194,9 +1273,33 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                          </div>
                       )}
                     </div>
-                    <div className="flex-[2] overflow-y-auto bg-slate-800 rounded-b-[32px] p-6 shadow-2xl z-10 border-t-4 border-slate-900 leading-relaxed">
-                      <p className="text-lg md:text-xl">{seite.text}</p>
-                      <p className="text-right text-xs text-slate-500 mt-4">{idx + 1} / {readingBook.seiten.length}</p>
+                    <div className={`${layoutStyles.txt} overflow-y-auto bg-slate-800 rounded-b-[32px] md:rounded-r-[32px] md:rounded-bl-none p-6 shadow-2xl z-10 border-t-4 md:border-t-0 md:border-l-4 border-slate-900 leading-relaxed flex flex-col relative`}>
+                      {editingPageIdx === idx ? (
+                        <>
+                          <textarea 
+                            className="bg-slate-700 text-white p-3 rounded-xl w-full flex-1 focus:outline-none resize-none mt-6"
+                            value={editingText}
+                            onChange={(e) => setEditingText(e.target.value)}
+                          />
+                          <button 
+                            className="absolute top-4 right-4 bg-emerald-500 text-white rounded-full w-8 h-8 flex items-center justify-center hover:bg-emerald-600 transition cursor-pointer z-20"
+                            onClick={() => handleSavePageText(idx)}
+                          >
+                            ✓
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-lg md:text-xl flex-1 pr-6">{seite.text}</p>
+                          <button 
+                            className="absolute top-4 right-4 bg-slate-700 rounded-full w-8 h-8 flex items-center justify-center text-sm opacity-50 hover:opacity-100 transition cursor-pointer z-20"
+                            onClick={() => { setEditingPageIdx(idx); setEditingText(seite.text); }}
+                          >
+                            ✏️
+                          </button>
+                        </>
+                      )}
+                      <p className="text-right text-xs text-slate-500 mt-4 shrink-0">{idx + 1} / {readingBook.seiten.length}</p>
                     </div>
                   </div>
                 );
