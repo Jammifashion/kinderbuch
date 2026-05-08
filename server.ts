@@ -246,7 +246,19 @@ Dein Output MUSS exakt dieses JSON-Format haben:
         }
       });
       
-      const txt = response.text || "{}";
+      let txt = response.text || "{}";
+      
+      // Clean up markdown block if present
+      if (txt.startsWith('```json')) {
+        txt = txt.slice(7);
+      } else if (txt.startsWith('```')) {
+        txt = txt.slice(3);
+      }
+      if (txt.endsWith('```')) {
+        txt = txt.slice(0, -3);
+      }
+      txt = txt.trim();
+
       const parsed = JSON.parse(txt);
       
       const newBookRef = db.collection('ausgearbeitete_buecher').doc();
@@ -265,7 +277,11 @@ Dein Output MUSS exakt dieses JSON-Format haben:
       const count = (skript?.erzeugteBuecherCount || 0) + 1;
       await db.collection('buecher').doc(bookId).update({ erzeugteBuecherCount: count });
 
-      res.json({ id: newBookRef.id, ...newBookData });
+      res.json({ 
+        id: newBookRef.id, 
+        ...newBookData, 
+        created_at: { seconds: Math.floor(Date.now() / 1000) } // Mock for client
+      });
     } catch (e: any) {
       console.error(e);
       res.status(500).json({ error: e.message });

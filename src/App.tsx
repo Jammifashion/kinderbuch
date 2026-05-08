@@ -826,6 +826,12 @@ export default function App() {
           <div className="w-full max-w-lg rounded-[32px] bg-white p-8 shadow-2xl">
             <h3 className="mb-6 text-2xl font-bold text-slate-800">Buch Konfigurator</h3>
             
+            {error && (
+              <div className="mb-6 rounded-2xl bg-red-100 p-4 text-red-800 border border-red-200 text-sm">
+                {error}
+              </div>
+            )}
+
             <div className="space-y-6">
               <div>
                 <label className="block text-sm font-bold text-slate-500 mb-3">Altersgruppe</label>
@@ -990,7 +996,8 @@ export default function App() {
               <button 
                 onClick={async () => {
                   await handleUpdateBook(editingBook);
-                  // TODO: Weiterleitung zu Buch ausarbeiten
+                  setSelectedSkriptForBook(editingBook);
+                  setEditingBook(null);
                 }} 
                 className="flex-[2] rounded-full bg-slate-900 py-4 font-bold text-white shadow-[0_4px_0_rgb(15,23,42)] hover:-translate-y-1 hover:shadow-[0_6px_0_rgb(15,23,42)] active:translate-y-1 active:shadow-none transition-all cursor-pointer"
               >
