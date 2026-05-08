@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { db, auth, storage } from './lib/firebase';
 import { collection, addDoc, serverTimestamp, getDocs, updateDoc, doc } from 'firebase/firestore';
@@ -82,18 +82,82 @@ interface StoryResult {
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
+  const [allBooks, setAllBooks] = useState<StoryResult[]>([]);
+  const [activeTab, setActiveTab] = useState<'create' | 'library'>('create');
   const [isDevMode, setIsDevMode] = useState(false);
   const [idea, setIdea] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isImageLoading, setIsImageLoading] = useState(false);
   const [result, setResult] = useState<StoryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editingBook, setEditingBook] = useState<StoryResult | null>(null);
+  const [selectedBooks, setSelectedBooks] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     return onAuthStateChanged(auth, (authUser) => {
       setUser(authUser);
+      if (authUser?.email === ADMIN_EMAIL) {
+        fetchBooks();
+      }
     });
   }, []);
+
+  const fetchBooks = async () => {
+    try {
+      const querySnapshot = await getDocs(collection(db, 'buecher'));
+      const books = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StoryResult));
+      setAllBooks(books);
+    } catch (err) {
+      console.error("Error fetching books:", err);
+    }
+  };
+
+  const AdminDashboard = () => {
+    const stats = useMemo(() => {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      
+      let total = 0;
+      let last30Days = 0;
+      let totalInputTokens = 0;
+      let totalOutputTokens = 0;
+
+      allBooks.forEach(book => {
+        if (!book.cost_metrics) return;
+        total += book.cost_metrics.total_cost_usd;
+        totalInputTokens += book.cost_metrics.text_input_tokens;
+        totalOutputTokens += book.cost_metrics.text_output_tokens;
+        
+        // Handling Firestore timestamps
+        const createdAt = book.created_at?.toDate ? book.created_at.toDate() : (book.created_at ? new Date(book.created_at) : null);
+        if (createdAt && createdAt >= thirtyDaysAgo) {
+          last30Days += book.cost_metrics.total_cost_usd;
+        }
+      });
+      return { total, last30Days, totalInputTokens, totalOutputTokens };
+    }, [allBooks]);
+
+    return (
+      <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-4">
+        <div className="rounded-3xl bg-white p-6 border border-orange-100 shadow-sm">
+          <h3 className="text-sm font-bold text-orange-500 uppercase tracking-widest mb-1">💰 Gesamtausgaben</h3>
+          <p className="text-3xl font-bold text-slate-800">${stats.total.toFixed(2)}</p>
+        </div>
+        <div className="rounded-3xl bg-white p-6 border border-slate-100 shadow-sm">
+          <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">📅 Letzte 30 Tage</h3>
+          <p className="text-3xl font-bold text-slate-800">${stats.last30Days.toFixed(2)}</p>
+        </div>
+        <div className="rounded-3xl bg-white p-6 border border-slate-100 shadow-sm">
+          <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">📥 Input Tokens</h3>
+          <p className="text-3xl font-bold text-slate-800">{stats.totalInputTokens.toLocaleString()}</p>
+        </div>
+        <div className="rounded-3xl bg-white p-6 border border-slate-100 shadow-sm">
+          <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">📤 Output Tokens</h3>
+          <p className="text-3xl font-bold text-slate-800">{stats.totalOutputTokens.toLocaleString()}</p>
+        </div>
+      </div>
+    );
+  };
 
   const handleLogin = async () => {
     const provider = new GoogleAuthProvider();
@@ -232,17 +296,39 @@ export default function App() {
     }
   };
 
-  const handleSelectTitle = async (titel: string) => {
-    if (!result) return;
+  const handleDeleteBook = async (bookId: string) => {
+    if (!confirm("Wirklich löschen?")) return;
     try {
-      await updateDoc(doc(db, 'buecher', result.id), {
-        ausgewaehlter_titel: titel
-      });
-      setResult({ ...result, ausgewaehlter_titel: titel });
+      await fetch(`/api/books/${bookId}`, { method: 'DELETE' });
+      setAllBooks(prev => prev.filter(b => b.id !== bookId));
     } catch (err) {
-      console.error(err);
-      setError('Titel konnte nicht gespeichert werden.');
+      setError('Löschen fehlgeschlagen.');
     }
+  };
+
+  const handleUpdateBook = async (updatedBook: StoryResult) => {
+    try {
+      await updateDoc(doc(db, 'buecher', updatedBook.id), { ...updatedBook });
+      setAllBooks(prev => prev.map(b => b.id === updatedBook.id ? updatedBook : b));
+      setEditingBook(null);
+    } catch (err) {
+      setError('Speichern fehlgeschlagen.');
+    }
+  };
+  
+  const handleToggleSelectBook = (bookId: string) => {
+    const newSelected = new Set(selectedBooks);
+    if (newSelected.has(bookId)) newSelected.delete(bookId);
+    else newSelected.add(bookId);
+    setSelectedBooks(newSelected);
+  };
+  
+  const handleDeleteSelected = async () => {
+    if (!confirm(`Markierte ${selectedBooks.size} Geschichten löschen?`)) return;
+    for (const bookId of selectedBooks) {
+      await handleDeleteBook(bookId);
+    }
+    setSelectedBooks(new Set());
   };
 
   const generateCharacterImage = async () => {
@@ -327,96 +413,129 @@ export default function App() {
         </div>
       </header>
       
-      {/* ... (rest of the UI, modified to add image generation button) */}
       <main className="mx-auto max-w-3xl">
-        <div className="mb-8 rounded-[40px] bg-white p-8 shadow-xl border-4 border-orange-50">
-          <textarea
-            id="ideaTextarea"
-            className="w-full rounded-3xl bg-slate-50 border-2 border-slate-100 p-6 text-lg focus:outline-none focus:border-orange-200 transition-all"
-            rows={4}
-            placeholder="Beschreibe deine Buchidee..."
-            value={idea}
-            onChange={(e) => setIdea(e.target.value)}
-          />
-          <button
-            id="generateButton"
-            onClick={handleGenerate}
-            disabled={isLoading || !idea}
-            className="mt-6 w-full rounded-3xl bg-orange-500 py-5 text-xl font-bold text-white transition-all shadow-[0_8px_0_rgb(194,65,12)] active:translate-y-1 active:shadow-none disabled:bg-slate-300 disabled:shadow-none"
-          >
-            {isLoading ? "Zaubere..." : "✨ Magie wirken lassen"}
-          </button>
+        <div className="flex gap-4 border-b border-orange-200 mb-8">
+          <button onClick={() => setActiveTab('create')} className={`p-4 font-bold border-b-4 transition ${activeTab === 'create' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>Neue Geschichte</button>
+          <button onClick={() => setActiveTab('library')} className={`p-4 font-bold border-b-4 transition ${activeTab === 'library' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>Meine Geschichten ({allBooks.length})</button>
         </div>
 
-        {error && (
-          <div className="mb-6 rounded-2xl bg-red-100 p-4 text-red-800 border border-red-200">
-            {error}
-          </div>
-        )}
-
-        {result && (
-          <div className="space-y-8 animate-in fade-in duration-700">
-            <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              {result.titel_optionen.map((titel, i) => (
-                <div 
-                  key={i} 
-                  onClick={() => handleSelectTitle(titel)}
-                  className={`cursor-pointer rounded-2xl border-2 p-4 text-center font-bold transition hover:shadow-sm ${
-                    result.ausgewaehlter_titel === titel 
-                      ? 'bg-orange-100 border-orange-500 text-orange-800' 
-                      : 'bg-white border-slate-100 text-slate-700 hover:border-orange-200'
-                  }`}
-                >
-                  {titel}
-                  {currentUser?.email === ADMIN_EMAIL && result.cost_metrics && (
-                      <div className="mt-2 text-xs text-orange-700 bg-orange-50 rounded-full px-2 py-1">
-                        💰 Kosten: ${result.cost_metrics.total_cost_usd.toFixed(2)}
-                      </div>
-                  )}
-                </div>
-              ))}
-            </section>
-
-            <section className="rounded-[40px] bg-white p-8 shadow-md border-2 border-slate-100">
-              <h2 className="mb-6 text-2xl font-bold text-slate-800">Die Story</h2>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                <div className="rounded-3xl bg-yellow-50 p-6 border border-yellow-100">
-                  <h3 className="text-xs font-bold uppercase tracking-widest text-yellow-600 mb-2">Anfang</h3>
-                  <p className="text-sm leading-relaxed text-yellow-900">{result.storyline.anfang}</p>
-                </div>
-                <div className="rounded-3xl bg-pink-50 p-6 border border-pink-100">
-                  <h3 className="text-xs font-bold uppercase tracking-widest text-pink-600 mb-2">Mitte</h3>
-                  <p className="text-sm leading-relaxed text-pink-900">{result.storyline.mitte}</p>
-                </div>
-                <div className="rounded-3xl bg-purple-50 p-6 border border-purple-100">
-                  <h3 className="text-xs font-bold uppercase tracking-widest text-purple-600 mb-2">Ende</h3>
-                  <p className="text-sm leading-relaxed text-purple-900">{result.storyline.ende}</p>
-                </div>
+        {activeTab === 'create' ? (
+          <>
+            {currentUser?.email === ADMIN_EMAIL && <AdminDashboard />}
+            <div className="mb-8 rounded-[40px] bg-white p-8 shadow-xl border-4 border-orange-50">
+              <textarea
+                id="ideaTextarea"
+                className="w-full rounded-3xl bg-slate-50 border-2 border-slate-100 p-6 text-lg focus:outline-none focus:border-orange-200 transition-all"
+                rows={4}
+                placeholder="Beschreibe deine Buchidee..."
+                value={idea}
+                onChange={(e) => setIdea(e.target.value)}
+              />
+              <button
+                id="generateButton"
+                onClick={handleGenerate}
+                disabled={isLoading || !idea}
+                className="mt-6 w-full rounded-3xl bg-orange-500 py-5 text-xl font-bold text-white transition-all shadow-[0_8px_0_rgb(194,65,12)] active:translate-y-1 active:shadow-none disabled:bg-slate-300 disabled:shadow-none"
+              >
+                {isLoading ? "Zaubere..." : "✨ Magie wirken lassen"}
+              </button>
+            </div>
+            {error && (
+              <div className="mb-6 rounded-2xl bg-red-100 p-4 text-red-800 border border-red-200">
+                {error}
               </div>
-            </section>
-
-            <section className="rounded-[40px] bg-[#F2FCEF] p-8 shadow-md border-2 border-green-100">
-              <div className="flex flex-col md:flex-row gap-6">
-                <div className="flex-1">
-                  <h2 className="mb-2 text-2xl font-bold text-green-800">Held: {result.hauptcharakter.name}</h2>
-                  <p className="text-sm text-green-700"><strong>Gattung:</strong> {result.hauptcharakter.gattung}</p>
-                  <p className="text-sm text-green-700"><strong>Persönlichkeit:</strong> {result.hauptcharakter.persoenlichkeit}</p>
-                  <p className="mt-2 text-sm text-green-900 italic">{result.hauptcharakter.aussehen_de}</p>
-                </div>
-                <div id="characterImagePlaceholder" className="flex-none w-48 h-48 rounded-2xl bg-white flex items-center justify-center text-slate-400 border-dashed border-4 border-slate-200 overflow-hidden">
-                  {isImageLoading ? (
-                    <div className="flex flex-col items-center">
-                      <div className="animate-spin text-4xl mb-2">⏳</div>
-                      <p className="text-[10px] text-center px-1">Nano Banana 2 zeichnet {result.hauptcharakter.name}...</p>
+            )}
+            {result && (
+              <div className="space-y-8 animate-in fade-in duration-700">
+                <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  {result.titel_optionen.map((titel, i) => (
+                    <div 
+                      key={i} 
+                      onClick={() => {
+                        updateDoc(doc(db, 'buecher', result.id), { ausgewaehlter_titel: titel });
+                        setResult({ ...result, ausgewaehlter_titel: titel });
+                      }}
+                      className={`cursor-pointer rounded-2xl border-2 p-4 text-center font-bold transition hover:shadow-sm ${
+                        result.ausgewaehlter_titel === titel 
+                          ? 'bg-orange-100 border-orange-500 text-orange-800' 
+                          : 'bg-white border-slate-100 text-slate-700 hover:border-orange-200'
+                      }`}
+                    >
+                      {titel}
+                      {currentUser?.email === ADMIN_EMAIL && result.cost_metrics && (
+                          <div className="mt-2 text-xs text-orange-700 bg-orange-50 rounded-full px-2 py-1">
+                            💰 Kosten: ${result.cost_metrics.total_cost_usd.toFixed(2)}
+                          </div>
+                      )}
                     </div>
-                  ) : result.hauptcharakter.avatar_url ? (
-                    <img src={result.hauptcharakter.avatar_url} alt="Held" className="w-full h-full object-cover" />
-                  ) : (
-                    <button onClick={generateCharacterImage} className="text-xs text-center p-2">Charakterbild generieren</button>
-                  )}
+                  ))}
+                </section>
+                
+                <section className="rounded-[40px] bg-white p-8 shadow-md border-2 border-slate-100">
+                  <h2 className="mb-6 text-2xl font-bold text-slate-800">Die Story</h2>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                    <div className="rounded-3xl bg-yellow-50 p-6 border border-yellow-100">
+                      <h3 className="text-xs font-bold uppercase tracking-widest text-yellow-600 mb-2">Anfang</h3>
+                      <p className="text-sm leading-relaxed text-yellow-900">{result.storyline.anfang}</p>
+                    </div>
+                    <div className="rounded-3xl bg-pink-50 p-6 border border-pink-100">
+                      <h3 className="text-xs font-bold uppercase tracking-widest text-pink-600 mb-2">Mitte</h3>
+                      <p className="text-sm leading-relaxed text-pink-900">{result.storyline.mitte}</p>
+                    </div>
+                    <div className="rounded-3xl bg-purple-50 p-6 border border-purple-100">
+                      <h3 className="text-xs font-bold uppercase tracking-widest text-purple-600 mb-2">Ende</h3>
+                      <p className="text-sm leading-relaxed text-purple-900">{result.storyline.ende}</p>
+                    </div>
+                  </div>
+                </section>
+                
+                <section className="rounded-[40px] bg-[#F2FCEF] p-8 shadow-md border-2 border-green-100">
+                  <div className="flex flex-col md:flex-row gap-6">
+                    <div className="flex-1">
+                      <h2 className="mb-2 text-2xl font-bold text-green-800">Held: {result.hauptcharakter.name}</h2>
+                      <p className="text-sm text-green-700"><strong>Gattung:</strong> {result.hauptcharakter.gattung}</p>
+                      <p className="text-sm text-green-700"><strong>Persönlichkeit:</strong> {result.hauptcharakter.persoenlichkeit}</p>
+                      <p className="mt-2 text-sm text-green-900 italic">{result.hauptcharakter.aussehen_de}</p>
+                    </div>
+                    <div id="characterImagePlaceholder" className="flex-none w-48 h-48 rounded-2xl bg-white flex items-center justify-center text-slate-400 border-dashed border-4 border-slate-200 overflow-hidden">
+                      {isImageLoading ? (
+                        <div className="flex flex-col items-center">
+                          <div className="animate-spin text-4xl mb-2">⏳</div>
+                          <p className="text-[10px] text-center px-1">Nano Banana 2 zeichnet {result.hauptcharakter.name}...</p>
+                        </div>
+                      ) : result.hauptcharakter.avatar_url ? (
+                        <img src={result.hauptcharakter.avatar_url} alt="Held" className="w-full h-full object-cover" />
+                      ) : (
+                        <button onClick={generateCharacterImage} className="text-xs text-center p-2">Charakterbild generieren</button>
+                      )}
+                    </div>
+                  </div>
+                </section>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {allBooks.length > 0 && selectedBooks.size > 0 && (
+              <button onClick={handleDeleteSelected} className="md:col-span-2 mb-4 bg-red-500 text-white font-bold py-2 px-4 rounded-full">
+                {selectedBooks.size} Geschichten löschen
+              </button>
+            )}
+            {allBooks.map(book => (
+              <div key={book.id} className="relative rounded-[30px] bg-white p-6 shadow-sm border border-slate-100 flex flex-col gap-4">
+                <input type="checkbox" onChange={() => handleToggleSelectBook(book.id)} checked={selectedBooks.has(book.id)} className="absolute top-4 left-4" />
+                <img src={book.hauptcharakter.avatar_url || ''} alt="" className="w-full h-40 object-cover rounded-2xl bg-slate-100" />
+                <h3 className="font-bold text-lg">{book.ausgewaehlter_titel || "Ohne Titel"}</h3>
+                <div className="flex justify-between items-center text-sm font-bold text-slate-500">
+                  <span>{book.created_at ? new Date(book.created_at.seconds * 1000).toLocaleDateString() : 'Unbekannt'}</span>
+                  {currentUser?.email === ADMIN_EMAIL && book.cost_metrics && <span>💰 ${book.cost_metrics.total_cost_usd.toFixed(2)}</span>}
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setEditingBook(book)} className="flex-1 bg-slate-100 text-slate-700 py-2 rounded-full font-bold">Bearbeiten</button>
+                  <button onClick={() => handleDeleteBook(book.id)} className="bg-red-50 text-red-500 py-2 px-4 rounded-full font-bold">🗑️</button>
                 </div>
               </div>
-            </section>
+            ))}
           </div>
         )}
       </main>

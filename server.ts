@@ -10,9 +10,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.applicationDefault(),
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || 'your-bucket-id.appspot.com' 
   });
 }
 const db = admin.firestore();
+const bucket = admin.storage().bucket();
 
 async function updateBookCosts(bookId: string, usage: { promptTokens?: number, outputTokens?: number, imageGenerated?: boolean }) {
   const bookRef = db.collection('buecher').doc(bookId);
@@ -54,6 +56,19 @@ async function startServer() {
   app.post("/api/track-cost", async (req, res) => {
     const { bookId, usage } = req.body;
     await updateBookCosts(bookId, usage);
+    res.json({ status: "ok" });
+  });
+
+  // Delete book and storage
+  app.delete("/api/books/:bookId", async (req, res) => {
+    const { bookId } = req.params;
+    
+    // Delete Firestore
+    await db.collection('buecher').doc(bookId).delete();
+    
+    // Delete Storage folder
+    await bucket.deleteFiles({ prefix: `buecher/${bookId}/` });
+    
     res.json({ status: "ok" });
   });
 
