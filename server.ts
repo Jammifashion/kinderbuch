@@ -11,11 +11,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Read firebase config properly
 let firebaseConfig: any = {};
-try {
-  const configContent = fs.readFileSync(path.join(process.cwd(), 'firebase-applet-config.json'), 'utf-8');
-  firebaseConfig = JSON.parse(configContent);
-} catch (e) {
-  console.log("Could not load firebase config, check if firebase-applet-config.json exists in root.");
+if (process.env.NODE_ENV !== 'production') {
+  try {
+    const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+    if (fs.existsSync(configPath)) {
+      const configContent = fs.readFileSync(configPath, 'utf-8');
+      firebaseConfig = JSON.parse(configContent);
+    }
+  } catch (e) {
+    console.log("Could not load local firebase config, skipping.");
+  }
 }
 
 // Initialize Firebase Admin
@@ -23,18 +28,23 @@ let db: any;
 let bucket: any;
 
 function initFirebase() {
-  if (!admin.apps.length) {
-    try {
-      admin.initializeApp({
-        credential: admin.credential.applicationDefault(),
-        projectId: firebaseConfig.projectId,
-        storageBucket: firebaseConfig.storageBucket 
-      });
-      console.log("Firebase Admin initialized successfully.");
-    } catch (e) {
-      console.error("Firebase Admin initialization failed. Server-side Firebase Admin features will not work.", e);
-    }
+  if (admin.apps.length) return;
+
+  try {
+    const options: any = {
+      credential: admin.credential.applicationDefault()
+    };
+
+    // Only inject overrides if we found a local config
+    if (firebaseConfig.projectId) options.projectId = firebaseConfig.projectId;
+    if (firebaseConfig.storageBucket) options.storageBucket = firebaseConfig.storageBucket;
+
+    admin.initializeApp(options);
+    console.log("Firebase Admin initialized successfully.");
+  } catch (e) {
+    console.error("Firebase Admin initialization failed. Server-side Firebase Admin features will not work.", e);
   }
+
   if (admin.apps.length) {
     db = admin.firestore();
     bucket = admin.storage().bucket();
@@ -81,7 +91,10 @@ async function updateBookCosts(bookId: string, usage: { promptTokens?: number, o
 async function startServer() {
   const app = express();
   app.use(express.json());
-  const PORT = 3000;
+  
+  // Use PORT from environment (Cloud Run / App Hosting), 
+  // otherwise default to 3000 for AI Studio compatibility.
+  const PORT = process.env.PORT || 3000;
 
   // Helper to ensure auth
   async function checkAdminAuth(req: any) {
