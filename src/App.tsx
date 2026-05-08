@@ -376,9 +376,13 @@ export default function App() {
     try {
       await updateDoc(doc(db, 'buecher', updatedBook.id), { ...updatedBook });
       setAllBooks(prev => prev.map(b => b.id === updatedBook.id ? updatedBook : b));
+      if (result && result.id === updatedBook.id) {
+        setResult(updatedBook);
+      }
       setEditingBook(null);
-    } catch (err) {
-      setError('Speichern fehlgeschlagen.');
+    } catch (err: any) {
+      console.error("Update error:", err);
+      setError(`Speichern fehlgeschlagen: ${err.message || 'Unbekannter Fehler'}`);
     }
   };
   
@@ -435,25 +439,95 @@ export default function App() {
     setIsImageLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/buecher/${bookId}/regenerate-avatar`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${await auth.currentUser?.getIdToken()}`
-        },
-        body: JSON.stringify({ prompt, oldUrl })
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error || "Bildgenerierung fehlgeschlagen.");
+      // 1. Paid API key check for AI Studio UI
+      if ((window as any).aistudio && typeof (window as any).aistudio.hasSelectedApiKey === 'function') {
+        const hasKey = await (window as any).aistudio.hasSelectedApiKey();
+        if (!hasKey) {
+          await (window as any).aistudio.openSelectKey();
+        }
       }
 
-      return data.avatar_url;
+      // 2. Init AI
+      const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error("Gemini API Key fehlt! Bitte in den Einstellungen der App setzen.");
+      }
+      const aiPaid = new GoogleGenAI({ apiKey });
+
+      // 3. Bombenfeste Anti-Text-Logik
+      const finalPrompt = prompt + ", absolutely no text, no letters, no words, no typography, no signatures, clean character digital art style, perfect illustration";
+
+      console.log(`[Frontend] Generiere Bild für Prompt: ${finalPrompt}`);
+
+      let response;
+      try {
+        response = await aiPaid.models.generateContent({
+          model: IMAGE_MODEL,
+          contents: {
+            parts: [{ text: finalPrompt }],
+          },
+          config: {
+            imageConfig: {
+              aspectRatio: "1:1",
+            }
+          }
+        });
+      } catch (apiErr: any) {
+        console.error("[Frontend] Nano Banana 2 API Fehler:", apiErr);
+        throw new Error(`API Fehler (Quota, Filter oder Key?): ${apiErr.message}`);
+      }
+
+      const base64Image = response?.text;
+      if (!base64Image) {
+        throw new Error("Bild-Antwort der API war leer.");
+      }
+
+      // 4. Altes Bild löschen (HART)
+      if (oldUrl) {
+        try {
+          console.log("[Frontend] Lösche altes Bild:", oldUrl);
+          const oldRef = ref(storage, oldUrl);
+          await deleteObject(oldRef);
+        } catch (delErr: any) {
+          console.error("[Frontend] Warnung: Konnte altes Bild nicht aus Firestore löschen:", delErr);
+          // Wir werfen keinen Fehler, damit der Prozess weitergeht!
+        }
+      }
+
+      // 5. Neues Bild im Firebase Storage speichern
+      const storageRef = ref(storage, `buecher/${bookId}/charakter_avatar_${Date.now()}.png`);
+      let url = "";
+      try {
+        const blob = await fetch(`data:image/png;base64,${base64Image}`).then(r => r.blob());
+        await uploadBytes(storageRef, blob);
+        url = await getDownloadURL(storageRef);
+      } catch (uploadErr: any) {
+        console.error("[Frontend] Storage Upload Fehler:", uploadErr);
+        throw new Error(`Storage Upload fehlgeschlagen: ${uploadErr.message}`);
+      }
+
+      // 6. DB Update
+      try {
+        await updateDoc(doc(db, 'buecher', bookId), {
+          'hauptcharakter.avatar_url': url
+        });
+      } catch (dbErr: any) {
+        console.error("[Frontend] DB Update Fehler:", dbErr);
+        throw new Error(`Konnte die URL nicht in Firestore speichern: ${dbErr.message}`);
+      }
+
+      // Tracker Info posten (Optional, hier über den /api Endpoint falls der Server doch läuft,
+      // aber wir ignorieren Fehler falls es nur statisch läuft)
+      fetch("/api/track-cost", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bookId, usage: { imageGenerated: true } })
+      }).catch(e => console.log("Tracking-Server nicht erreichbar, übersprungen."));
+
+      return url;
     } catch (err: any) {
-      console.error(err);
-      setError(`Fehler: ${err.message}`);
+      console.error("[Frontend] Komplettabbruch generateCharacterImage:", err);
+      setError(`Generierung fehlgeschlagen: ${err.message}`);
       return null;
     } finally {
       setIsImageLoading(false);
@@ -610,7 +684,7 @@ export default function App() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {allBooks.length > 0 && selectedBooks.size > 0 && (
-              <button onClick={handleDeleteSelected} className="md:col-span-2 mb-4 bg-red-500 text-white font-bold py-2 px-4 rounded-full">
+              <button onClick={handleDeleteSelected} className="md:col-span-2 mb-4 bg-red-500 text-white font-bold py-3 px-6 rounded-full hover:bg-red-600 active:bg-red-700 cursor-pointer transition-colors shadow-sm cursor-pointer">
                 {selectedBooks.size} Geschichten löschen
               </button>
             )}
@@ -624,8 +698,8 @@ export default function App() {
                   {currentUser?.email === ADMIN_EMAIL && book.cost_metrics && <span>💰 ${book.cost_metrics.total_cost_usd.toFixed(2)}</span>}
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => setEditingBook(book)} className="flex-1 bg-slate-100 text-slate-700 py-2 rounded-full font-bold">Bearbeiten</button>
-                  <button onClick={(e) => { e.stopPropagation(); handleDeleteBook(book.id); }} className="bg-red-50 text-red-500 py-2 px-4 rounded-full font-bold relative z-20 cursor-pointer">🗑️</button>
+                  <button onClick={() => setEditingBook(book)} className="flex-1 bg-slate-100 text-slate-700 py-2 rounded-full font-bold hover:bg-slate-200 cursor-pointer transition-colors">Bearbeiten</button>
+                  <button onClick={(e) => { e.stopPropagation(); handleDeleteBook(book.id); }} className="bg-red-50 text-red-500 py-2 px-4 rounded-full font-bold relative z-20 cursor-pointer hover:bg-red-100 transition-colors">🗑️</button>
                 </div>
               </div>
             ))}

@@ -133,8 +133,6 @@ async function startServer() {
           },
           config: {
             imageConfig: {
-              numberOfImages: 1,
-              outputMimeType: "image/png",
               aspectRatio: "1:1",
             }
           }
