@@ -1,0 +1,202 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { useState } from 'react';
+import { GoogleGenAI } from '@google/genai';
+import { db } from './lib/firebase';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+
+// --- Initialization ---
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+const MODEL_NAME = 'gemini-3.1-flash-lite';
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: 'unknown',
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+interface StoryResult {
+  titel_optionen: string[];
+  zielgruppe: string;
+  storyline: {
+    anfang: string;
+    mitte: string;
+    ende: string;
+  };
+  story_skelett: {
+    kapitel_1: string;
+    kapitel_2: string;
+    kapitel_3: string;
+    kapitel_4: string;
+    kapitel_5: string;
+  };
+  hauptcharakter: {
+    name: string;
+    gattung: string;
+    persoenlichkeit: string;
+    aussehen_de: string;
+    bild_prompt_en: string;
+  };
+}
+
+export default function App() {
+  const [idea, setIdea] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [result, setResult] = useState<StoryResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleGenerate = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const prompt = `Erstelle basierend auf der Idee: "${idea}" ein Kinderbuch-Konzept. Die Antwort MUSS zwingend ein valides JSON-Objekt sein, das exakt dieser Struktur entspricht (kein Markdown drumherum, keine zusätzlichen Zeichen):
+      {
+        "titel_optionen": ["...", "...", "..."],
+        "zielgruppe": "...",
+        "storyline": { "anfang": "...", "mitte": "...", "ende": "..." },
+        "story_skelett": { "kapitel_1": "...", "kapitel_2": "...", "kapitel_3": "...", "kapitel_4": "...", "kapitel_5": "..." },
+        "hauptcharakter": { "name": "...", "gattung": "...", "persoenlichkeit": "...", "aussehen_de": "...", "bild_prompt_en": "..." }
+      }`;
+      
+      const response = await ai.models.generateContent({
+        model: MODEL_NAME,
+        contents: prompt,
+      });
+      const text = response.text || '';
+      const cleanJson = text.replace(/```json\n?|\n?```/g, '').trim();
+      const storyData: StoryResult = JSON.parse(cleanJson);
+
+      // Save to Firestore
+      try {
+        await addDoc(collection(db, 'buecher'), {
+          ...storyData,
+          original_idea: idea,
+          created_at: serverTimestamp(),
+          status: 'draft'
+        });
+      } catch (e) {
+        handleFirestoreError(e, OperationType.WRITE, 'buecher');
+      }
+
+      setResult(storyData);
+    } catch (err: any) {
+      console.error('Error generating story:', err);
+      try {
+        const errInfo = JSON.parse(err.message);
+        setError(`Fehler beim Speichern: ${errInfo.error}`);
+      } catch {
+        setError('Hoppla! Da ist etwas schiefgelaufen beim Geschichten-Zaubern. Bitte versuche es noch einmal.');
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-[#FFFDF2] p-6 font-sans text-slate-800">
+      <header className="mb-10 text-center">
+        <h1 className="text-4xl font-bold tracking-tight text-orange-600">Kinderbuch Zauber</h1>
+        <p className="text-lg text-slate-500">Verwandle deine Idee in ein Abenteuer!</p>
+      </header>
+
+      <main className="mx-auto max-w-3xl">
+        <div className="mb-8 rounded-[40px] bg-white p-8 shadow-xl border-4 border-orange-50">
+          <textarea
+            id="ideaTextarea"
+            className="w-full rounded-3xl bg-slate-50 border-2 border-slate-100 p-6 text-lg focus:outline-none focus:border-orange-200 transition-all"
+            rows={4}
+            placeholder="Beschreibe deine Buchidee..."
+            value={idea}
+            onChange={(e) => setIdea(e.target.value)}
+          />
+          <button
+            id="generateButton"
+            onClick={handleGenerate}
+            disabled={isLoading || !idea}
+            className="mt-6 w-full rounded-3xl bg-orange-500 py-5 text-xl font-bold text-white transition-all shadow-[0_8px_0_rgb(194,65,12)] active:translate-y-1 active:shadow-none disabled:bg-slate-300 disabled:shadow-none"
+          >
+            {isLoading ? "Zaubere..." : "✨ Magie wirken lassen"}
+          </button>
+        </div>
+
+        {error && (
+          <div className="mb-6 rounded-2xl bg-red-100 p-4 text-red-800 border border-red-200">
+            {error}
+          </div>
+        )}
+
+        {result && (
+          <div className="space-y-8 animate-in fade-in duration-700">
+            <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              {result.titel_optionen.map((titel, i) => (
+                <div key={i} className="cursor-pointer rounded-2xl bg-white border-2 border-slate-100 p-4 text-center font-bold text-slate-700 transition hover:border-orange-200 hover:shadow-sm">
+                  {titel}
+                </div>
+              ))}
+            </section>
+
+            <section className="rounded-[40px] bg-white p-8 shadow-md border-2 border-slate-100">
+              <h2 className="mb-6 text-2xl font-bold text-slate-800">Die Story</h2>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className="rounded-3xl bg-yellow-50 p-6 border border-yellow-100">
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-yellow-600 mb-2">Anfang</h3>
+                  <p className="text-sm leading-relaxed text-yellow-900">{result.storyline.anfang}</p>
+                </div>
+                <div className="rounded-3xl bg-pink-50 p-6 border border-pink-100">
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-pink-600 mb-2">Mitte</h3>
+                  <p className="text-sm leading-relaxed text-pink-900">{result.storyline.mitte}</p>
+                </div>
+                <div className="rounded-3xl bg-purple-50 p-6 border border-purple-100">
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-purple-600 mb-2">Ende</h3>
+                  <p className="text-sm leading-relaxed text-purple-900">{result.storyline.ende}</p>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-[40px] bg-[#F2FCEF] p-8 shadow-md border-2 border-green-100">
+              <div className="flex flex-col md:flex-row gap-6">
+                <div className="flex-1">
+                  <h2 className="mb-2 text-2xl font-bold text-green-800">Held: {result.hauptcharakter.name}</h2>
+                  <p className="text-sm text-green-700"><strong>Gattung:</strong> {result.hauptcharakter.gattung}</p>
+                  <p className="text-sm text-green-700"><strong>Persönlichkeit:</strong> {result.hauptcharakter.persoenlichkeit}</p>
+                  <p className="mt-2 text-sm text-green-900 italic">{result.hauptcharakter.aussehen_de}</p>
+                </div>
+                <div id="characterImagePlaceholder" className="flex-none w-48 h-48 rounded-2xl bg-white flex items-center justify-center text-slate-400 border-dashed border-4 border-slate-200">
+                  KI-Held Bild
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}

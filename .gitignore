@@ -1,0 +1,11 @@
+node_modules/
+dist/
+build/
+.next/
+.firebase/
+.env*
+!.env.example
+*.log
+.DS_Store
+.eslintrc
+.prettierrc
