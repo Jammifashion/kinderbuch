@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { db, auth, storage } from './lib/firebase';
 import { collection, addDoc, serverTimestamp, getDocs, updateDoc, doc, deleteDoc } from 'firebase/firestore';
@@ -47,10 +47,30 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
+interface BookPage {
+  pageNumber: number;
+  text: string;
+  imagePrompt: string;
+  imageUrl?: string;
+}
+
+interface AusgearbeitetesBuch {
+  id: string;
+  skriptId: string;
+  titel: string;
+  zielalter: string;
+  stimmung: string;
+  seitenAnzahl: number;
+  seiten: BookPage[];
+  created_at: any;
+  coverImage?: string;
+}
+
 interface StoryResult {
   id: string; // Add ID field
   titel_optionen: string[];
   ausgewaehlter_titel?: string;
+  erzeugteBuecherCount?: number;
   cost_metrics?: {
     text_input_tokens: number;
     text_output_tokens: number;
@@ -196,22 +216,49 @@ const AdminDashboard = ({ allBooks }: { allBooks: StoryResult[] }) => {
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [allBooks, setAllBooks] = useState<StoryResult[]>([]);
-  const [activeTab, setActiveTab] = useState<'create' | 'library'>('create');
+  const [activeTab, setActiveTab] = useState<'create' | 'library' | 'books'>('create');
   const [isDevMode, setIsDevMode] = useState(false);
   const [idea, setIdea] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isImageLoading, setIsImageLoading] = useState(false);
+  const [isGeneratingBook, setIsGeneratingBook] = useState(false);
   const [result, setResult] = useState<StoryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editingBook, setEditingBook] = useState<StoryResult | null>(null);
   const [selectedBooks, setSelectedBooks] = useState<Set<string>>(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | 'selected' | null>(null);
+  
+  const [allFinishedBooks, setAllFinishedBooks] = useState<AusgearbeitetesBuch[]>([]);
+  const [selectedSkriptForBook, setSelectedSkriptForBook] = useState<StoryResult | null>(null);
+  const [bookConfig, setBookConfig] = useState({ zielalter: '4-6 Jahre', stimmung: 'Lustig', seitenAnzahl: 12 });
+  const [readingBook, setReadingBook] = useState<AusgearbeitetesBuch | null>(null);
+  const [currentReadingPage, setCurrentReadingPage] = useState(0);
+  const [touchStart, setTouchStart] = useState<number | null>(null);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    setTouchStart(e.targetTouches[0].clientX);
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStart === null || !readingBook) return;
+    const touchEnd = e.changedTouches[0].clientX;
+    const distance = touchStart - touchEnd;
+    const swipeThreshold = 50;
+
+    if (distance > swipeThreshold) {
+      setCurrentReadingPage(p => Math.min(readingBook.seiten.length - 1, p + 1));
+    } else if (distance < -swipeThreshold) {
+      setCurrentReadingPage(p => Math.max(0, p - 1));
+    }
+    setTouchStart(null);
+  };
 
   useEffect(() => {
     return onAuthStateChanged(auth, (authUser) => {
       setUser(authUser);
       if (authUser?.email === ADMIN_EMAIL) {
         fetchBooks();
+        fetchFinishedBooks();
       }
     });
   }, []);
@@ -223,6 +270,16 @@ export default function App() {
       setAllBooks(books);
     } catch (err) {
       console.error("Error fetching books:", err);
+    }
+  };
+
+  const fetchFinishedBooks = async () => {
+    try {
+      const querySnapshot = await getDocs(collection(db, 'ausgearbeitete_buecher'));
+      const books = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AusgearbeitetesBuch));
+      setAllFinishedBooks(books);
+    } catch (err) {
+      console.error("Error fetching finished books:", err);
     }
   };
 
@@ -542,6 +599,33 @@ export default function App() {
     }
   };
 
+  const handleGenerateBook = async () => {
+    if (!selectedSkriptForBook) return;
+    setIsGeneratingBook(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/buecher/${selectedSkriptForBook.id}/erstelle-buch`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${await auth.currentUser?.getIdToken()}`
+        },
+        body: JSON.stringify(bookConfig)
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Fehler beim Erstellen des Buchs");
+      
+      setSelectedSkriptForBook(null);
+      setActiveTab('books');
+      fetchBooks();
+      fetchFinishedBooks();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsGeneratingBook(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#FFFDF2] p-6 font-sans text-slate-800">
       <header className="mb-10 flex items-center justify-between">
@@ -553,9 +637,10 @@ export default function App() {
       </header>
       
       <main className="mx-auto max-w-3xl">
-        <div className="flex gap-4 border-b border-orange-200 mb-8">
-          <button onClick={() => setActiveTab('create')} className={`p-4 font-bold border-b-4 transition ${activeTab === 'create' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>Neue Geschichte</button>
-          <button onClick={() => setActiveTab('library')} className={`p-4 font-bold border-b-4 transition ${activeTab === 'library' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>Meine Geschichten ({allBooks.length})</button>
+        <div className="flex gap-4 border-b border-orange-200 mb-8 overflow-x-auto">
+          <button onClick={() => setActiveTab('create')} className={`p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'create' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>Neue Geschichte</button>
+          <button onClick={() => setActiveTab('library')} className={`p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'library' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>Meine Kurzskripte ({allBooks.length})</button>
+          <button onClick={() => setActiveTab('books')} className={`p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'books' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>Bücher ({allFinishedBooks.length})</button>
         </div>
 
         {activeTab === 'create' ? (
@@ -606,7 +691,7 @@ export default function App() {
                 </section>
                 
                 <section className="rounded-[40px] bg-white p-8 shadow-md border-2 border-slate-100">
-                  <h2 className="mb-6 text-2xl font-bold text-slate-800">Die Story</h2>
+                  <h2 className="mb-6 text-2xl font-bold text-slate-800">Story kurz Skript</h2>
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                     <div className="rounded-3xl bg-yellow-50 p-6 border border-yellow-100">
                       <h3 className="text-xs font-bold uppercase tracking-widest text-yellow-600 mb-2">Anfang</h3>
@@ -689,7 +774,7 @@ export default function App() {
               </div>
             )}
           </>
-        ) : (
+        ) : activeTab === 'library' ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {allBooks.length > 0 && selectedBooks.size > 0 && (
               <button onClick={handleDeleteSelected} className="md:col-span-2 mb-4 bg-red-500 text-white font-bold py-3 px-6 rounded-full hover:bg-red-600 active:bg-red-700 cursor-pointer transition-colors shadow-sm cursor-pointer">
@@ -706,14 +791,99 @@ export default function App() {
                   {currentUser?.email === ADMIN_EMAIL && book.cost_metrics && <span>💰 ${book.cost_metrics.total_cost_usd.toFixed(2)}</span>}
                 </div>
                 <div className="flex gap-2">
+                  <button onClick={() => setSelectedSkriptForBook(book)} className="flex-[2] bg-indigo-500 text-white py-2 rounded-full font-bold hover:bg-indigo-600 transition-colors shadow-sm cursor-pointer border border-indigo-400">📖 Buch erzeugen</button>
+                </div>
+                <div className="flex gap-2">
                   <button onClick={() => setEditingBook(book)} className="flex-1 bg-slate-100 text-slate-700 py-2 rounded-full font-bold hover:bg-slate-200 cursor-pointer transition-colors">Bearbeiten</button>
                   <button onClick={(e) => { e.stopPropagation(); handleDeleteBook(book.id); }} className="bg-red-50 text-red-500 py-2 px-4 rounded-full font-bold relative z-20 cursor-pointer hover:bg-red-100 transition-colors">🗑️</button>
                 </div>
               </div>
             ))}
           </div>
-        )}
+        ) : activeTab === 'books' ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {allFinishedBooks.length === 0 && (
+              <p className="text-slate-500 col-span-2 text-center py-12">Noch keine fertigen Bücher vorhanden.</p>
+            )}
+            {allFinishedBooks.map(book => (
+              <div key={book.id} className="relative rounded-[30px] bg-white p-6 shadow-sm border border-slate-100 flex flex-col gap-4 cursor-pointer hover:shadow-md transition-shadow" onClick={() => setReadingBook(book)}>
+                <img src={book.coverImage || ''} alt="Cover" className="w-full h-48 object-cover rounded-2xl bg-amber-50" />
+                <h3 className="font-bold text-xl text-slate-800">{book.titel}</h3>
+                <div className="flex flex-wrap gap-2">
+                  <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-2 py-1 rounded-md">{book.zielalter}</span>
+                  <span className="bg-pink-100 text-pink-800 text-xs font-bold px-2 py-1 rounded-md">{book.stimmung}</span>
+                  <span className="bg-slate-100 text-slate-600 text-xs font-bold px-2 py-1 rounded-md">{book.seitenAnzahl} Seiten</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </main>
+
+      {/* Configurator Modal */}
+      {selectedSkriptForBook && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg rounded-[32px] bg-white p-8 shadow-2xl">
+            <h3 className="mb-6 text-2xl font-bold text-slate-800">Buch Konfigurator</h3>
+            
+            <div className="space-y-6">
+              <div>
+                <label className="block text-sm font-bold text-slate-500 mb-3">Altersgruppe</label>
+                <div className="flex gap-2">
+                  {['2-4 Jahre', '4-6 Jahre', '6-8 Jahre'].map(alter => (
+                    <button 
+                      key={alter}
+                      onClick={() => setBookConfig({ ...bookConfig, zielalter: alter })}
+                      className={`flex-1 py-2 rounded-xl text-sm font-bold border-2 transition-colors cursor-pointer ${bookConfig.zielalter === alter ? 'border-orange-500 text-orange-600 bg-orange-50' : 'border-slate-100 text-slate-500 hover:border-slate-200'}`}
+                    >
+                      {alter}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-500 mb-3">Stimmung</label>
+                <div className="flex flex-wrap gap-2">
+                  {['Lustig', 'Träumerisch', 'Lehrreich', 'Spannend'].map(stimmung => (
+                    <button 
+                      key={stimmung}
+                      onClick={() => setBookConfig({ ...bookConfig, stimmung })}
+                      className={`px-4 py-2 rounded-xl text-sm font-bold border-2 transition-colors cursor-pointer ${bookConfig.stimmung === stimmung ? 'border-indigo-500 text-indigo-600 bg-indigo-50' : 'border-slate-100 text-slate-500 hover:border-slate-200'}`}
+                    >
+                      {stimmung}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-500 mb-3">Seitenanzahl</label>
+                <select 
+                  className="w-full rounded-xl border-2 border-slate-100 p-3 font-bold text-slate-700 outline-none focus:border-slate-300"
+                  value={bookConfig.seitenAnzahl}
+                  onChange={(e) => setBookConfig({ ...bookConfig, seitenAnzahl: parseInt(e.target.value) })}
+                >
+                  {(bookConfig.zielalter === '2-4 Jahre' ? [8, 12] : bookConfig.zielalter === '4-6 Jahre' ? [12, 16, 24] : [16, 24]).map(num => (
+                    <option key={num} value={num}>{num} Seiten</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex gap-4 mt-8 pt-6 border-t border-slate-100">
+                <button onClick={() => setSelectedSkriptForBook(null)} className="flex-1 rounded-full bg-slate-100 py-3 font-bold text-slate-700 hover:bg-slate-200 cursor-pointer">Abbrechen</button>
+                <button 
+                  onClick={handleGenerateBook} 
+                  disabled={isGeneratingBook}
+                  className="flex-[2] rounded-full bg-indigo-500 py-3 font-bold text-white shadow-[0_4px_0_rgb(67,56,202)] hover:bg-indigo-600 active:translate-y-1 active:shadow-none cursor-pointer border border-indigo-400 disabled:opacity-50 disabled:translate-y-1 disabled:shadow-none"
+                >
+                  {isGeneratingBook ? "Wird geschrieben..." : "Buch ausarbeiten ✨"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (
@@ -733,7 +903,7 @@ export default function App() {
       {editingBook && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 overflow-y-auto">
           <div className="w-full max-w-4xl rounded-[40px] bg-white p-8 shadow-2xl my-8 max-h-[90vh] overflow-y-auto">
-            <h3 className="mb-6 text-3xl font-bold text-slate-800">📖 Geschichte bearbeiten</h3>
+            <h3 className="mb-6 text-3xl font-bold text-slate-800">📖 Kurzskript bearbeiten</h3>
             
             <div className="space-y-6">
               <div>
@@ -804,7 +974,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex gap-4 mt-8 pt-6 border-t border-slate-100">
+            <div className="flex flex-col md:flex-row gap-4 mt-8 pt-6 border-t border-slate-100">
               <button 
                 onClick={() => setEditingBook(null)} 
                 className="flex-1 rounded-full bg-slate-100 py-4 font-bold text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
@@ -813,10 +983,83 @@ export default function App() {
               </button>
               <button 
                 onClick={() => handleUpdateBook(editingBook)} 
-                className="flex-1 rounded-full bg-orange-500 py-4 font-bold text-white shadow-[0_4px_0_rgb(194,65,12)] hover:bg-orange-400 active:translate-y-1 active:shadow-none transition-all cursor-pointer"
+                className="flex-1 rounded-full bg-orange-100 py-4 font-bold text-orange-700 hover:bg-orange-200 transition-colors cursor-pointer"
               >
                 💾 Speichern
               </button>
+              <button 
+                onClick={async () => {
+                  await handleUpdateBook(editingBook);
+                  // TODO: Weiterleitung zu Buch ausarbeiten
+                }} 
+                className="flex-[2] rounded-full bg-slate-900 py-4 font-bold text-white shadow-[0_4px_0_rgb(15,23,42)] hover:-translate-y-1 hover:shadow-[0_6px_0_rgb(15,23,42)] active:translate-y-1 active:shadow-none transition-all cursor-pointer"
+              >
+                Weiter: Buch ausarbeiten ➡️
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reader Modal */}
+      {readingBook && (
+        <div className="fixed inset-0 z-[70] flex flex-col bg-slate-900 text-white">
+          <div className="flex justify-between items-center p-4 bg-slate-800/80 backdrop-blur-md absolute top-0 w-full z-[80]">
+            <h3 className="font-bold truncate px-4">{readingBook.titel}</h3>
+            <button onClick={() => { setReadingBook(null); setCurrentReadingPage(0); }} className="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-full cursor-pointer transition-colors shrink-0">Schließen</button>
+          </div>
+
+          <div className="flex-1 flex items-center justify-center relative overflow-hidden pt-16">
+            <button 
+              onClick={() => setCurrentReadingPage(p => Math.max(0, p - 1))}
+              disabled={currentReadingPage === 0}
+              className="absolute left-2 md:left-8 z-[90] w-12 h-12 bg-black/50 rounded-full flex items-center justify-center text-2xl disabled:opacity-20 cursor-pointer backdrop-blur-md transition-all hover:bg-black/70"
+            >
+              ◀
+            </button>
+            <button 
+              onClick={() => setCurrentReadingPage(p => Math.min(readingBook.seiten.length - 1, p + 1))}
+              disabled={currentReadingPage === readingBook.seiten.length - 1}
+              className="absolute right-2 md:right-8 z-[90] w-12 h-12 bg-black/50 rounded-full flex items-center justify-center text-2xl disabled:opacity-20 cursor-pointer backdrop-blur-md transition-all hover:bg-black/70"
+            >
+              ▶
+            </button>
+
+            <div 
+              className="w-full max-w-2xl h-full flex items-center justify-center relative px-4 md:px-16 pb-8 touch-pan-y"
+              onTouchStart={handleTouchStart}
+              onTouchEnd={handleTouchEnd}
+            >
+              {readingBook.seiten.map((seite, idx) => {
+                const isRendered = Math.abs(idx - currentReadingPage) <= 1;
+                const isActive = idx === currentReadingPage;
+                const translatePercent = (idx - currentReadingPage) * 100;
+                
+                if (!isRendered) return null;
+
+                return (
+                  <div 
+                    key={idx} 
+                    className="absolute w-full h-[85%] px-4 md:px-8 flex flex-col transition-transform duration-300 ease-in-out"
+                    style={{ transform: `translateX(${translatePercent}%)`, opacity: isActive ? 1 : 0.3 }}
+                  >
+                    <div className="flex-[3] bg-white rounded-t-[32px] overflow-hidden flex items-center justify-center relative shadow-xl">
+                      {seite.imageUrl ? (
+                        <img src={seite.imageUrl} alt={`Seite ${idx + 1}`} className="w-full h-full object-cover" loading="lazy" />
+                      ) : (
+                         <div className="flex flex-col items-center justify-center h-full w-full bg-slate-100 text-slate-500 p-6 overflow-hidden">
+                           <span className="text-sm border-2 border-dashed border-slate-300 p-4 rounded-3xl overflow-auto text-center italic w-full h-full">"{seite.imagePrompt}"</span>
+                           <button className="bg-indigo-500 text-white px-6 py-3 rounded-full font-bold shadow-sm transition-colors hover:bg-indigo-600 mt-4 cursor-pointer">Bilder zaubern (Demnächst)</button>
+                         </div>
+                      )}
+                    </div>
+                    <div className="flex-[2] overflow-y-auto bg-slate-800 rounded-b-[32px] p-6 shadow-2xl z-10 border-t-4 border-slate-900 leading-relaxed">
+                      <p className="text-lg md:text-xl">{seite.text}</p>
+                      <p className="text-right text-xs text-slate-500 mt-4">{idx + 1} / {readingBook.seiten.length}</p>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

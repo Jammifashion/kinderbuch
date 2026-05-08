@@ -194,6 +194,84 @@ async function startServer() {
   });
 
   // Track costs endpoint
+  app.post("/api/buecher/:bookId/erstelle-buch", async (req, res) => {
+    try {
+      await checkAdminAuth(req);
+      const { bookId } = req.params;
+      const { zielalter, stimmung, seitenAnzahl } = req.body;
+      
+      const bookDoc = await db.collection('buecher').doc(bookId).get();
+      if (!bookDoc.exists) throw new Error("Kurzskript nicht gefunden");
+      const skript = bookDoc.data();
+      
+      const { GoogleGenAI } = await import('@google/genai');
+      const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+      if (!apiKey) throw new Error("API Key missing");
+      const aiServer = new GoogleGenAI({ apiKey });
+
+      const promptStr = `
+Du bist ein professioneller Kinderbuchautor. Mache aus dem folgenden Kurzskript ein vollständiges Buch, formatiert als JSON.
+Die Parameter:
+Zielalter: ${zielalter}
+Stimmung: ${stimmung}
+Seiten: ${seitenAnzahl}
+Charakter: ${JSON.stringify(skript?.hauptcharakter)}
+Storyline: ${JSON.stringify(skript?.storyline)}
+
+Teile die Storyline auf EXAKT ${seitenAnzahl} Seiten auf. Passe den Wortschatz an das Zielalter und den Schreibstil an die Stimmung an.
+Erzeuge für JEDE Seite einen englischen Bild-Prompt für die Bilder-KI. 
+Regel für Prompts: Übernimm das Aussehen des Charakters ("${skript?.hauptcharakter?.aussehen_de}") und füge eine Anti-Text-Regel hinzu ("absolutely no text, no letters, no words, typography, clean character illustration").
+
+Dein Output MUSS exakt dieses JSON-Format haben:
+{
+  "titel": "Kreativer Titel des Buchs",
+  "seiten": [
+    {
+      "pageNumber": 1,
+      "text": "Der Text für diese Seite...",
+      "imagePrompt": "Der Bild-Prompt auf Englisch..."
+    }
+    // genau ${seitenAnzahl} Elemente
+  ]
+}
+`;
+
+      const response = await aiServer.models.generateContent({
+        model: 'gemini-3.1-pro-preview',
+        contents: {
+          parts: [{ text: promptStr }],
+        },
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
+      
+      const txt = response.text || "{}";
+      const parsed = JSON.parse(txt);
+      
+      const newBookRef = db.collection('ausgearbeitete_buecher').doc();
+      const newBookData = {
+        skriptId: bookId,
+        titel: parsed.titel || "Neues Buch",
+        zielalter,
+        stimmung,
+        seitenAnzahl,
+        seiten: parsed.seiten || [],
+        coverImage: skript?.hauptcharakter?.avatar_url || null,
+        created_at: admin.firestore.FieldValue.serverTimestamp()
+      };
+      await newBookRef.set(newBookData);
+      
+      const count = (skript?.erzeugteBuecherCount || 0) + 1;
+      await db.collection('buecher').doc(bookId).update({ erzeugteBuecherCount: count });
+
+      res.json({ id: newBookRef.id, ...newBookData });
+    } catch (e: any) {
+      console.error(e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post("/api/track-cost", async (req, res) => {
     const { bookId, usage } = req.body;
     await updateBookCosts(bookId, usage);
