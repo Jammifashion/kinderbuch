@@ -477,7 +477,15 @@ export default function App() {
         throw new Error(`API Fehler (Quota, Filter oder Key?): ${apiErr.message}`);
       }
 
-      const base64Image = response?.text;
+      let base64Image = '';
+      if (response && response.candidates && response.candidates[0].content.parts) {
+        for (const part of response.candidates[0].content.parts) {
+          if (part.inlineData) {
+            base64Image = part.inlineData.data;
+            break;
+          }
+        }
+      }
       if (!base64Image) {
         throw new Error("Bild-Antwort der API war leer.");
       }
@@ -768,7 +776,19 @@ export default function App() {
                 </div>
               </div>
 
-              <div>
+              <div className="flex flex-col items-center gap-4 bg-slate-50 p-6 rounded-[30px] border border-slate-100">
+                <h4 className="font-bold text-slate-500 uppercase tracking-widest text-xs">Charakter Avatar</h4>
+                {editingBook.hauptcharakter.avatar_url ? (
+                  <img 
+                    src={editingBook.hauptcharakter.avatar_url} 
+                    alt="Charakter Avatar" 
+                    className="w-48 h-48 object-cover rounded-[24px] shadow-sm mb-2"
+                  />
+                ) : (
+                  <div className="w-48 h-48 bg-slate-200 rounded-[24px] flex items-center justify-center mb-2">
+                    <span className="text-4xl">📸</span>
+                  </div>
+                )}
                 <button
                   onClick={async () => {
                     const newAvatarUrl = await generateCharacterImage(editingBook.id, editingBook.hauptcharakter.bild_prompt_en, editingBook.hauptcharakter.avatar_url);
@@ -777,7 +797,7 @@ export default function App() {
                     }
                   }}
                   disabled={isImageLoading}
-                  className="w-full rounded-2xl bg-slate-100 py-3 font-bold text-slate-700 hover:bg-slate-200 transition-colors"
+                  className="w-full md:w-auto px-8 rounded-full bg-slate-200 py-3 font-bold text-slate-700 hover:bg-slate-300 transition-colors disabled:opacity-50 cursor-pointer"
                 >
                   {isImageLoading ? "🔄 Generiere..." : "🔄 Bild neu generieren"}
                 </button>

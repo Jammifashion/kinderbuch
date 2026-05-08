@@ -142,7 +142,15 @@ async function startServer() {
         throw new Error(`API Generation failed: ${genErr.message || JSON.stringify(genErr)}`);
       }
 
-      const base64Image = response?.text;
+      let base64Image = '';
+      if (response && response.candidates && response.candidates[0].content.parts) {
+        for (const part of response.candidates[0].content.parts) {
+          if (part.inlineData) {
+            base64Image = part.inlineData.data;
+            break;
+          }
+        }
+      }
       if (!base64Image) {
         throw new Error("Image Generation returned no image data.");
       }
