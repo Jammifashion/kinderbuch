@@ -45,9 +45,21 @@ function initFirebase() {
     console.error("Firebase Admin initialization failed. Server-side Firebase Admin features will not work.", e);
   }
 
-  if (admin.apps.length) {
-    db = admin.firestore();
-    bucket = admin.storage().bucket();
+  try {
+    if (admin.apps.length) {
+      try {
+        db = admin.firestore();
+      } catch (err: any) {
+        console.warn("Could not initialize Firestore admin:", err.message);
+      }
+      try {
+        bucket = admin.storage().bucket();
+      } catch (err: any) {
+        console.warn("Could not initialize Storage admin bucket:", err.message);
+      }
+    }
+  } catch(e) {
+    console.error("Unknown error getting firebase resources:", e);
   }
 }
 
@@ -293,4 +305,6 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch(err => {
+    console.error("Fatal error during server startup:", err);
+});
