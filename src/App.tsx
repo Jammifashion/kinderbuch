@@ -296,14 +296,9 @@ export default function App() {
     }
   };
 
-  const handleDeleteBook = async (bookId: string) => {
-    if (!confirm("Wirklich löschen?")) return;
-    try {
-      await fetch(`/api/books/${bookId}`, { method: 'DELETE' });
-      setAllBooks(prev => prev.filter(b => b.id !== bookId));
-    } catch (err) {
-      setError('Löschen fehlgeschlagen.');
-    }
+  const performDeleteBook = async (bookId: string) => {
+    const response = await fetch(`/api/books/${bookId}`, { method: 'DELETE' });
+    if (!response.ok) throw new Error('Failed to delete');
   };
 
   const handleUpdateBook = async (updatedBook: StoryResult) => {
@@ -322,13 +317,28 @@ export default function App() {
     else newSelected.add(bookId);
     setSelectedBooks(newSelected);
   };
-  
+
+  const handleDeleteBook = async (bookId: string) => {
+    if (!confirm("Wirklich löschen?")) return;
+    try {
+      await performDeleteBook(bookId);
+      setAllBooks(prev => prev.filter(b => b.id !== bookId));
+    } catch (err) {
+      setError('Löschen fehlgeschlagen.');
+    }
+  };
+
   const handleDeleteSelected = async () => {
     if (!confirm(`Markierte ${selectedBooks.size} Geschichten löschen?`)) return;
-    for (const bookId of selectedBooks) {
-      await handleDeleteBook(bookId);
+    try {
+      for (const bookId of selectedBooks) {
+        await performDeleteBook(bookId);
+      }
+      setAllBooks(prev => prev.filter(b => !selectedBooks.has(b.id)));
+      setSelectedBooks(new Set());
+    } catch (err) {
+      setError('Mehrfachlöschung fehlgeschlagen.');
     }
-    setSelectedBooks(new Set());
   };
 
   const generateCharacterImage = async () => {
@@ -532,7 +542,7 @@ export default function App() {
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => setEditingBook(book)} className="flex-1 bg-slate-100 text-slate-700 py-2 rounded-full font-bold">Bearbeiten</button>
-                  <button onClick={() => handleDeleteBook(book.id)} className="bg-red-50 text-red-500 py-2 px-4 rounded-full font-bold">🗑️</button>
+                  <button onClick={(e) => { e.stopPropagation(); handleDeleteBook(book.id); }} className="bg-red-50 text-red-500 py-2 px-4 rounded-full font-bold relative z-20 cursor-pointer">🗑️</button>
                 </div>
               </div>
             ))}
