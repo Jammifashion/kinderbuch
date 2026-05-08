@@ -248,6 +248,11 @@ export default function App() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | 'selected' | null>(null);
   const [showDeleteFinishedConfirm, setShowDeleteFinishedConfirm] = useState<string | null>(null);
   
+  const [isBackupManagerOpen, setIsBackupManagerOpen] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [autoBackups, setAutoBackups] = useState<any[]>([]);
+  const [isBackupLoading, setIsBackupLoading] = useState(false);
+  
   const [allFinishedBooks, setAllFinishedBooks] = useState<AusgearbeitetesBuch[]>([]);
   const [selectedSkriptForBook, setSelectedSkriptForBook] = useState<StoryResult | null>(null);
   const [bookConfig, setBookConfig] = useState({ zielalter: '4-6 Jahre', stimmung: 'Lustig', seitenAnzahl: 12 });
@@ -308,9 +313,41 @@ export default function App() {
       if (authUser?.email === ADMIN_EMAIL) {
         fetchBooks();
         fetchFinishedBooks();
+        checkAndCreateAutoBackup();
       }
     });
   }, []);
+
+  const checkAndCreateAutoBackup = async () => {
+    try {
+      const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+      const backupsRef = collection(db, 'automatisierte_backups');
+      const querySnapshot = await getDocs(backupsRef);
+      const existingBackups = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      
+      const hasToday = existingBackups.some(b => b.dateString === today);
+      if (!hasToday) {
+        // Create auto backup
+        const buecherSnap = await getDocs(collection(db, 'buecher'));
+        const ausBuecherSnap = await getDocs(collection(db, 'ausgearbeitete_buecher'));
+        
+        const backupData = {
+          dateString: today,
+          created_at: serverTimestamp(),
+          buecher: buecherSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+          ausgearbeitete_buecher: ausBuecherSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+          customLabels: JSON.parse(localStorage.getItem('jammi_custom_labels') || '[]')
+        };
+        
+        await addDoc(backupsRef, backupData);
+        setAutoBackups([...existingBackups, { id: 'temp', ...backupData }].sort((a,b) => b.dateString.localeCompare(a.dateString)).slice(0,7));
+      } else {
+        setAutoBackups(existingBackups.sort((a,b) => b.dateString.localeCompare(a.dateString)).slice(0,7));
+      }
+    } catch (e) {
+      console.error("Auto Backup Failed:", e);
+    }
+  };
 
   const fetchBooks = async () => {
     try {
@@ -468,17 +505,149 @@ export default function App() {
   };
 
   const handleDownloadBackup = async () => {
+    setIsBackupLoading(true);
     try {
-      const querySnapshot = await getDocs(collection(db, 'buecher'));
-      const data = querySnapshot.docs.map(doc => doc.data());
+      const buecherSnap = await getDocs(collection(db, 'buecher'));
+      const ausBuecherSnap = await getDocs(collection(db, 'ausgearbeitete_buecher'));
+      
+      const data = {
+        version: '1.0',
+        timestamp: new Date().toISOString(),
+        buecher: buecherSnap.docs.map(doc => ({ backup_original_id: doc.id, ...doc.data() })),
+        ausgearbeitete_buecher: ausBuecherSnap.docs.map(doc => ({ backup_original_id: doc.id, ...doc.data() })),
+        customLabels: customLabels
+      };
+      
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `backup_${new Date().toISOString()}.json`;
+      a.download = `kinderbuch_backup_${new Date().toISOString().split('T')[0]}.json`;
       a.click();
     } catch (err) {
       setError('Backup konnte nicht erstellt werden.');
+    } finally {
+      setIsBackupLoading(false);
+    }
+  };
+
+  const handleUploadBackup = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setIsBackupLoading(true);
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const text = e.target?.result as string;
+        const data = JSON.parse(text);
+        
+        if (data.customLabels) {
+          setCustomLabels(data.customLabels);
+        }
+        
+        const buecherSnap = await getDocs(collection(db, 'buecher'));
+        const existingBuecher = new Set(buecherSnap.docs.map(d => d.id));
+        
+        const ausBuecherSnap = await getDocs(collection(db, 'ausgearbeitete_buecher'));
+        const existingAusBuecher = new Set(ausBuecherSnap.docs.map(d => d.id));
+        
+        let restoredBooks = 0;
+        let restoredAusBooks = 0;
+        
+        if (data.buecher && Array.isArray(data.buecher)) {
+          for (const item of data.buecher) {
+            const docId = item.backup_original_id || item.id;
+            if (docId && !existingBuecher.has(docId)) {
+                const { backup_original_id, id, ...rest } = item;
+                await updateDoc(doc(db, 'buecher', docId), rest).catch(async () => {
+                    await addDoc(collection(db, 'buecher'), rest);
+                });
+                restoredBooks++;
+            }
+          }
+        }
+        
+        if (data.ausgearbeitete_buecher && Array.isArray(data.ausgearbeitete_buecher)) {
+          for (const item of data.ausgearbeitete_buecher) {
+            const docId = item.backup_original_id || item.id;
+            if (docId && !existingAusBuecher.has(docId)) {
+                const { backup_original_id, id, ...rest } = item;
+                await updateDoc(doc(db, 'ausgearbeitete_buecher', docId), rest).catch(async () => {
+                    await addDoc(collection(db, 'ausgearbeitete_buecher'), rest);
+                });
+                restoredAusBooks++;
+            }
+          }
+        }
+        
+        alert(`Backup erfolgreich gemerged! ${restoredBooks} Kurzskripte und ${restoredAusBooks} Bücher wurden wiederhergestellt. Bereits existierende Daten wurden zum Schutz nicht überschrieben.`);
+        
+        fetchBooks();
+        fetchFinishedBooks();
+        
+      } catch (err: any) {
+        alert("Fehler beim Lesen des Backups: " + err.message);
+      } finally {
+        setIsBackupLoading(false);
+        setIsBackupManagerOpen(false);
+        event.target.value = ''; // Reset file input
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleRestoreAutoBackup = async (backupData: any) => {
+    setIsBackupLoading(true);
+    try {
+      if (backupData.customLabels) {
+        setCustomLabels(backupData.customLabels);
+      }
+      
+      const buecherSnap = await getDocs(collection(db, 'buecher'));
+      const existingBuecher = new Set(buecherSnap.docs.map(d => d.id));
+      
+      const ausBuecherSnap = await getDocs(collection(db, 'ausgearbeitete_buecher'));
+      const existingAusBuecher = new Set(ausBuecherSnap.docs.map(d => d.id));
+      
+      let restoredBooks = 0;
+      let restoredAusBooks = 0;
+      
+      if (backupData.buecher && Array.isArray(backupData.buecher)) {
+        for (const item of backupData.buecher) {
+          const docId = item.backup_original_id || item.id;
+          if (docId && !existingBuecher.has(docId)) {
+              const { backup_original_id, id, ...rest } = item;
+              await updateDoc(doc(db, 'buecher', docId), rest).catch(async () => {
+                  await addDoc(collection(db, 'buecher'), rest);
+              });
+              restoredBooks++;
+          }
+        }
+      }
+      
+      if (backupData.ausgearbeitete_buecher && Array.isArray(backupData.ausgearbeitete_buecher)) {
+        for (const item of backupData.ausgearbeitete_buecher) {
+          const docId = item.backup_original_id || item.id;
+          if (docId && !existingAusBuecher.has(docId)) {
+              const { backup_original_id, id, ...rest } = item;
+              await updateDoc(doc(db, 'ausgearbeitete_buecher', docId), rest).catch(async () => {
+                  await addDoc(collection(db, 'ausgearbeitete_buecher'), rest);
+              });
+              restoredAusBooks++;
+          }
+        }
+      }
+      
+      alert(`Auto-Backup geladen! ${restoredBooks} Kurzskripte und ${restoredAusBooks} Bücher wurden wiederhergestellt.`);
+      
+      fetchBooks();
+      fetchFinishedBooks();
+    } catch (err: any) {
+      alert("Fehler beim Laden des Auto-Backups: " + err.message);
+    } finally {
+      setIsBackupLoading(false);
+      setIsBackupManagerOpen(false);
     }
   };
 
@@ -904,20 +1073,30 @@ Dein Output MUSS exakt dieses JSON-Format haben:
   });
 
   return (
-    <div className="min-h-screen bg-[#FFFDF2] p-6 font-sans text-slate-800">
-      <header className="mb-10 flex items-center justify-between">
-        <h1 className="text-4xl font-bold tracking-tight text-orange-600">Kinderbuch Zauber</h1>
-        <div className="flex gap-4">
-          <button onClick={handleDownloadBackup} className="rounded-full bg-slate-100 px-6 py-3 font-bold text-slate-700">Backup laden</button>
-          <button onClick={() => { signOut(auth); setIsDevMode(false); }} className="rounded-full bg-slate-800 px-6 py-3 font-bold text-white">Ausloggen</button>
+    <div className="min-h-screen bg-[#FFFDF2] p-4 sm:p-6 font-sans text-slate-800 w-full max-w-full overflow-x-hidden relative">
+      <header className="mb-4 sm:mb-10 flex items-center justify-between mt-2 sm:mt-4 relative z-40 bg-[#FFFDF2]">
+        <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight text-orange-600">Kinderbuch Zauber</h1>
+        
+        {/* Desktop Buttons */}
+        <div className="hidden md:flex gap-4">
+          <button onClick={() => setIsBackupManagerOpen(true)} className="rounded-full bg-slate-100 flex items-center justify-center w-12 h-12 text-2xl font-bold text-slate-700 hover:bg-slate-200 transition-colors shadow-sm cursor-pointer" title="Backup-Manager">💾</button>
+          <button onClick={() => { signOut(auth); setIsDevMode(false); }} className="rounded-full bg-slate-800 px-6 py-3 font-bold text-white shadow-sm cursor-pointer whitespace-nowrap">Ausloggen</button>
         </div>
+
+        {/* Mobile Burger Icon */}
+        <button 
+          onClick={() => setIsMobileMenuOpen(true)} 
+          className="md:hidden flex items-center justify-center w-10 h-10 bg-white rounded-full shadow-sm text-lg cursor-pointer text-slate-700 border border-slate-100 hover:bg-slate-50 transition-colors"
+        >
+          ☰
+        </button>
       </header>
       
       <main className="mx-auto max-w-3xl">
-        <div className="flex gap-4 border-b border-orange-200 mb-8 overflow-x-auto">
-          <button onClick={() => setActiveTab('create')} className={`p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'create' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>Neue Geschichte</button>
-          <button onClick={() => setActiveTab('library')} className={`p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'library' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>Meine Kurzskripte ({allBooks.length})</button>
-          <button onClick={() => setActiveTab('books')} className={`p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'books' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>Bücher ({allFinishedBooks.length})</button>
+        <div className="hidden md:flex gap-2 sm:gap-4 border-b border-orange-200 mb-8 overflow-x-auto pb-2 scrollbar-hide">
+          <button onClick={() => setActiveTab('create')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'create' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>Neue Geschichte</button>
+          <button onClick={() => setActiveTab('library')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'library' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>Meine Kurzskripte ({allBooks.length})</button>
+          <button onClick={() => setActiveTab('books')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'books' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>Bücher ({allFinishedBooks.length})</button>
         </div>
 
         {activeTab === 'create' ? (
@@ -1551,6 +1730,86 @@ Dein Output MUSS exakt dieses JSON-Format haben:
         </div>
       )}
       
+      {/* Backup Manager Modal */}
+      {isBackupManagerOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-[40px] p-8 w-full max-w-lg shadow-2xl relative">
+            <h2 className="text-3xl font-bold text-slate-800 mb-6 flex items-center gap-3">
+              ☁️ Backup-Manager
+            </h2>
+            
+            <div className="space-y-6">
+              <div className="bg-indigo-50 border border-indigo-100 rounded-[24px] p-6 space-y-4">
+                <h3 className="font-bold text-indigo-900 text-lg">Manuelles Backup</h3>
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <button 
+                    onClick={handleDownloadBackup}
+                    disabled={isBackupLoading}
+                    className="flex-1 bg-white text-indigo-700 py-3 rounded-full font-bold shadow-sm hover:shadow-md transition-all sm:text-sm cursor-pointer disabled:opacity-50"
+                  >
+                    📥 Als .json exportieren
+                  </button>
+                  <label className="flex-1 bg-indigo-600 text-white py-3 rounded-full font-bold shadow-sm hover:shadow-md transition-all text-center sm:text-sm cursor-pointer hover:bg-indigo-700 disabled:opacity-50">
+                    📤 .json importieren
+                    <input 
+                      type="file" 
+                      accept=".json" 
+                      className="hidden" 
+                      onChange={handleUploadBackup}
+                      disabled={isBackupLoading}
+                    />
+                  </label>
+                </div>
+              </div>
+              
+              <div className="bg-slate-50 border border-slate-100 rounded-[24px] p-6 space-y-4">
+                <div className="flex justify-between items-center">
+                  <h3 className="font-bold text-slate-800 text-lg">Automatische Backups</h3>
+                  <span className="bg-green-100 text-green-800 text-[10px] uppercase tracking-wider font-bold px-2 py-1 rounded-full">Täglich</span>
+                </div>
+                <p className="text-sm text-slate-500">
+                  Die App erstellt jeden Tag beim ersten Start automatisch ein Backup (letzte 7 Tage).
+                </p>
+                {autoBackups.length > 0 ? (
+                  <div className="space-y-2 max-h-[180px] overflow-y-auto pr-2 scrollbar-hide">
+                    {autoBackups.map((ab) => (
+                      <div key={ab.id || ab.dateString} className="flex justify-between items-center bg-white border border-slate-100 rounded-xl p-3 shadow-sm">
+                        <span className="font-bold text-slate-700">{new Date(ab.dateString).toLocaleDateString()}</span>
+                        <button 
+                          onClick={() => {
+                            if(window.confirm("Bist du sicher? Dies fügt die Daten aus dem Backup zu den aktuellen hinzu (Merge). Das Überschreiben überschreibt nicht direkt, sondern fügt fehlende Daten hinzu.")) {
+                              handleRestoreAutoBackup(ab);
+                            }
+                          }}
+                          disabled={isBackupLoading}
+                          className="bg-emerald-100 text-emerald-800 px-3 py-1.5 rounded-full text-xs font-bold hover:bg-emerald-200 transition-colors disabled:opacity-50 cursor-pointer"
+                        >
+                          Wiederherstellen
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-400 italic text-center p-4">Noch keine automatischen Backups vorhanden. Das erste wird heute erstellt!</p>
+                )}
+              </div>
+            </div>
+            
+            <button 
+              onClick={() => setIsBackupManagerOpen(false)}
+              className="mt-8 w-full py-4 text-slate-500 font-bold hover:bg-slate-100 rounded-full transition-colors cursor-pointer"
+            >
+              Schließen
+            </button>
+            {isBackupLoading && (
+              <div className="absolute inset-0 bg-white/50 backdrop-blur-sm rounded-[40px] flex items-center justify-center">
+                 <div className="animate-spin text-4xl">⏳</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Label Edit Modal */}
       {isEditingLabels && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
@@ -1597,6 +1856,46 @@ Dein Output MUSS exakt dieses JSON-Format haben:
           </div>
         </div>
       )}
+
+      {/* Mobile Sidebar Navigation */}
+      <div 
+        className={`fixed inset-0 z-[110] transition-opacity duration-300 md:hidden ${isMobileMenuOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+      >
+        <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setIsMobileMenuOpen(false)} />
+        <div 
+          className={`absolute top-0 right-0 bottom-0 w-[280px] bg-white shadow-2xl transition-transform duration-300 ease-in-out transform flex flex-col ${isMobileMenuOpen ? 'translate-x-0' : 'translate-x-full'}`}
+        >
+          <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-orange-50/50">
+            <h2 className="font-bold text-orange-600 text-xl">Menü</h2>
+            <button onClick={() => setIsMobileMenuOpen(false)} className="text-slate-500 text-2xl hover:text-slate-800 transition px-2">×</button>
+          </div>
+          <div className="flex flex-col gap-2 p-4 flex-1 overflow-y-auto">
+            <button onClick={() => { setActiveTab('create'); setIsMobileMenuOpen(false); }} className={`p-4 font-bold rounded-2xl flex items-center gap-3 transition-colors text-left ${activeTab === 'create' ? 'bg-orange-100 text-orange-700' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}>
+              <span className="text-xl">📖</span> Neue Geschichte
+            </button>
+            <button onClick={() => { setActiveTab('library'); setIsMobileMenuOpen(false); }} className={`p-4 font-bold rounded-2xl flex items-center gap-3 transition-colors text-left ${activeTab === 'library' ? 'bg-orange-100 text-orange-700' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}>
+              <span className="text-xl">📜</span> Meine Kurzskripte <span className="ml-auto bg-white/50 px-2 py-0.5 rounded-full text-xs">{allBooks.length}</span>
+            </button>
+            <button onClick={() => { setActiveTab('books'); setIsMobileMenuOpen(false); }} className={`p-4 font-bold rounded-2xl flex items-center gap-3 transition-colors text-left ${activeTab === 'books' ? 'bg-orange-100 text-orange-700' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}>
+              <span className="text-xl">📚</span> Bücher <span className="ml-auto bg-white/50 px-2 py-0.5 rounded-full text-xs">{allFinishedBooks.length}</span>
+            </button>
+            
+            <div className="h-px bg-slate-100 my-2" />
+            
+            <button onClick={() => { setIsEditingLabels(true); setIsMobileMenuOpen(false); }} className="p-4 font-bold rounded-2xl flex items-center gap-3 bg-slate-50 text-slate-600 hover:bg-slate-100 transition-colors text-left">
+              <span className="text-xl">🏷️</span> Label-Verwaltung
+            </button>
+            <button onClick={() => { setIsBackupManagerOpen(true); setIsMobileMenuOpen(false); }} className="p-4 font-bold rounded-2xl flex items-center gap-3 bg-slate-50 text-slate-600 hover:bg-slate-100 transition-colors text-left">
+              <span className="text-xl">💾</span> Backup-Manager
+            </button>
+          </div>
+          <div className="p-4 border-t border-slate-100">
+            <button onClick={() => { signOut(auth); setIsDevMode(false); setIsMobileMenuOpen(false); }} className="w-full rounded-2xl bg-slate-800 px-6 py-4 font-bold text-white shadow-sm cursor-pointer whitespace-nowrap text-center">
+              Ausloggen
+            </button>
+          </div>
+        </div>
+      </div>
 
     </div>
   );
