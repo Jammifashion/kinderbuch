@@ -1,10 +1,8 @@
 {
-  "projectId": "gen-lang-client-0390033722",
-  "appId": "1:411332932591:web:0936d680f318def4b27c1a",
-  "apiKey": "AIzaSyAB2raZh6uIjytNiJAame-xgGSyXynYRWI",
-  "authDomain": "gen-lang-client-0390033722.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-cfab79cc-fea3-494c-a659-34c686009fce",
-  "storageBucket": "gen-lang-client-0390033722.firebasestorage.app",
-  "messagingSenderId": "411332932591",
-  "measurementId": ""
+  "apiKey": "AIzaSyCeLUoFvsyR3-QkRib2TeGGLZwz39icbOQ",
+  "authDomain": "kinderbuch-63f97.firebaseapp.com",
+  "projectId": "kinderbuch-63f97",
+  "storageBucket": "kinderbuch-63f97.firebasestorage.app",
+  "messagingSenderId": "857331538756",
+  "appId": "1:857331538756:web:e813d0bb1b3f2fdbca9511"
 }
