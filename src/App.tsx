@@ -6,8 +6,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { db, auth, storage } from './lib/firebase';
-import { collection, addDoc, serverTimestamp, getDocs, updateDoc, doc } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { collection, addDoc, serverTimestamp, getDocs, updateDoc, doc, deleteDoc } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
 
 // --- Initialization ---
@@ -80,6 +80,119 @@ interface StoryResult {
   };
 }
 
+const AdminDashboard = ({ allBooks }: { allBooks: StoryResult[] }) => {
+  const [liveSpend, setLiveSpend] = useState<number | null>(null);
+  const [isLiveLoading, setIsLiveLoading] = useState(false);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
+
+  const handleFetchLiveBilling = async () => {
+    setIsLiveLoading(true);
+    setDashboardError(null);
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) {
+        throw new Error("Nicht authentifiziert. Bitte regulär mit Google anmelden.");
+      }
+      const response = await fetch('/api/admin/live-billing', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || "Abfrage fehlgeschlagen");
+      }
+
+      const data = await response.json();
+      if (data.currentSpend !== undefined) {
+        setLiveSpend(data.currentSpend);
+      }
+    } catch (err: any) {
+      console.error("Live billing error:", err);
+      setDashboardError(err.message || "Unbekannter Fehler bei der Abfrage.");
+    } finally {
+      setIsLiveLoading(false);
+    }
+  };
+
+  const stats = useMemo(() => {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    let total = 0;
+    let last30Days = 0;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+
+    allBooks.forEach(book => {
+      if (!book.cost_metrics) return;
+      total += book.cost_metrics.total_cost_usd;
+      totalInputTokens += book.cost_metrics.text_input_tokens;
+      totalOutputTokens += book.cost_metrics.text_output_tokens;
+      
+      // @ts-ignore
+      const createdAt = book.created_at?.toDate ? book.created_at.toDate() : (book.created_at ? new Date(book.created_at) : null);
+      if (createdAt && createdAt >= thirtyDaysAgo) {
+        last30Days += book.cost_metrics.total_cost_usd;
+      }
+    });
+    return { total, last30Days, totalInputTokens, totalOutputTokens };
+  }, [allBooks]);
+
+  return (
+    <div className="space-y-4 mb-8">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <div className="rounded-3xl bg-white p-6 border border-orange-100 shadow-sm transition-all hover:border-orange-200">
+          <h3 className="text-sm font-bold text-orange-500 uppercase tracking-widest mb-1">💰 Gesamtausgaben</h3>
+          <p className="text-3xl font-bold text-slate-800">${stats.total.toFixed(2)}</p>
+        </div>
+        <div className="rounded-3xl bg-white p-6 border border-slate-100 shadow-sm">
+          <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">📅 Letzte 30 Tage</h3>
+          <p className="text-3xl font-bold text-slate-800">${stats.last30Days.toFixed(2)}</p>
+        </div>
+        <div className="rounded-3xl bg-white p-6 border border-slate-100 shadow-sm">
+          <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">📥 Input Tokens</h3>
+          <p className="text-3xl font-bold text-slate-800">{stats.totalInputTokens.toLocaleString()}</p>
+        </div>
+        <div className="rounded-3xl bg-white p-6 border border-slate-100 shadow-sm">
+          <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">📤 Output Tokens</h3>
+          <p className="text-3xl font-bold text-slate-800">{stats.totalOutputTokens.toLocaleString()}</p>
+        </div>
+      </div>
+
+      <div className="flex flex-col md:flex-row md:items-center gap-4 p-4 bg-white rounded-3xl border border-slate-100 shadow-sm animate-in fade-in duration-500">
+        <button 
+          onClick={handleFetchLiveBilling}
+          disabled={isLiveLoading}
+          className="flex items-center justify-center gap-2 px-6 py-3 bg-slate-800 text-white font-bold rounded-full transition-all active:scale-95 disabled:bg-slate-300 shadow-[0_4px_0_rgb(30,41,59)] active:translate-y-1 active:shadow-none h-12 min-w-[260px] cursor-pointer"
+        >
+          {isLiveLoading ? (
+            <span className="animate-spin text-xl">🔄</span>
+          ) : "🔄 Live-Cloud-Konto abfragen"}
+        </button>
+        
+        {liveSpend !== null && !dashboardError && (
+          <div className="animate-in fade-in slide-in-from-left-4 duration-500">
+            <p className="text-lg font-bold text-slate-800">
+              Live-Verbrauch laut Google: <span className="text-orange-600">${liveSpend.toFixed(2)}</span>
+            </p>
+            <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-tighter leading-tight">
+              Hinweis: Google aktualisiert diese API-Werte mit einer systembedingten Verzögerung von 1-3 Stunden.
+            </p>
+          </div>
+        )}
+
+        {dashboardError && (
+          <p className="text-sm font-medium text-red-500 animate-in shake">
+            ❌ {dashboardError}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [allBooks, setAllBooks] = useState<StoryResult[]>([]);
@@ -92,6 +205,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [editingBook, setEditingBook] = useState<StoryResult | null>(null);
   const [selectedBooks, setSelectedBooks] = useState<Set<string>>(new Set());
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | 'selected' | null>(null);
 
   useEffect(() => {
     return onAuthStateChanged(auth, (authUser) => {
@@ -110,53 +224,6 @@ export default function App() {
     } catch (err) {
       console.error("Error fetching books:", err);
     }
-  };
-
-  const AdminDashboard = () => {
-    const stats = useMemo(() => {
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      
-      let total = 0;
-      let last30Days = 0;
-      let totalInputTokens = 0;
-      let totalOutputTokens = 0;
-
-      allBooks.forEach(book => {
-        if (!book.cost_metrics) return;
-        total += book.cost_metrics.total_cost_usd;
-        totalInputTokens += book.cost_metrics.text_input_tokens;
-        totalOutputTokens += book.cost_metrics.text_output_tokens;
-        
-        // Handling Firestore timestamps
-        const createdAt = book.created_at?.toDate ? book.created_at.toDate() : (book.created_at ? new Date(book.created_at) : null);
-        if (createdAt && createdAt >= thirtyDaysAgo) {
-          last30Days += book.cost_metrics.total_cost_usd;
-        }
-      });
-      return { total, last30Days, totalInputTokens, totalOutputTokens };
-    }, [allBooks]);
-
-    return (
-      <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-4">
-        <div className="rounded-3xl bg-white p-6 border border-orange-100 shadow-sm">
-          <h3 className="text-sm font-bold text-orange-500 uppercase tracking-widest mb-1">💰 Gesamtausgaben</h3>
-          <p className="text-3xl font-bold text-slate-800">${stats.total.toFixed(2)}</p>
-        </div>
-        <div className="rounded-3xl bg-white p-6 border border-slate-100 shadow-sm">
-          <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">📅 Letzte 30 Tage</h3>
-          <p className="text-3xl font-bold text-slate-800">${stats.last30Days.toFixed(2)}</p>
-        </div>
-        <div className="rounded-3xl bg-white p-6 border border-slate-100 shadow-sm">
-          <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">📥 Input Tokens</h3>
-          <p className="text-3xl font-bold text-slate-800">{stats.totalInputTokens.toLocaleString()}</p>
-        </div>
-        <div className="rounded-3xl bg-white p-6 border border-slate-100 shadow-sm">
-          <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">📤 Output Tokens</h3>
-          <p className="text-3xl font-bold text-slate-800">{stats.totalOutputTokens.toLocaleString()}</p>
-        </div>
-      </div>
-    );
   };
 
   const handleLogin = async () => {
@@ -297,8 +364,12 @@ export default function App() {
   };
 
   const performDeleteBook = async (bookId: string) => {
-    const response = await fetch(`/api/books/${bookId}`, { method: 'DELETE' });
-    if (!response.ok) throw new Error('Failed to delete');
+    try {
+      // Delete from Firestore
+      await deleteDoc(doc(db, 'buecher', bookId));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `buecher/${bookId}`);
+    }
   };
 
   const handleUpdateBook = async (updatedBook: StoryResult) => {
@@ -318,96 +389,72 @@ export default function App() {
     setSelectedBooks(newSelected);
   };
 
-  const handleDeleteBook = async (bookId: string) => {
-    if (!confirm("Wirklich löschen?")) return;
-    try {
-      await performDeleteBook(bookId);
-      setAllBooks(prev => prev.filter(b => b.id !== bookId));
-    } catch (err) {
-      setError('Löschen fehlgeschlagen.');
-    }
+  const handleDeleteBook = (bookId: string) => {
+    setShowDeleteConfirm(bookId);
   };
 
-  const handleDeleteSelected = async () => {
-    if (!confirm(`Markierte ${selectedBooks.size} Geschichten löschen?`)) return;
-    try {
-      for (const bookId of selectedBooks) {
-        await performDeleteBook(bookId);
+  const handleDeleteSelected = () => {
+    setShowDeleteConfirm('selected');
+  };
+
+  const confirmDelete = async () => {
+    if (!showDeleteConfirm) return;
+    
+    if (showDeleteConfirm === 'selected') {
+      try {
+        for (const bookId of selectedBooks) {
+          await performDeleteBook(bookId);
+        }
+        setAllBooks(prev => prev.filter(b => !selectedBooks.has(b.id)));
+        setSelectedBooks(new Set());
+      } catch (err) {
+        setError('Mehrfachlöschung fehlgeschlagen.');
       }
-      setAllBooks(prev => prev.filter(b => !selectedBooks.has(b.id)));
-      setSelectedBooks(new Set());
-    } catch (err) {
-      setError('Mehrfachlöschung fehlgeschlagen.');
+    } else {
+      try {
+        await performDeleteBook(showDeleteConfirm);
+        setAllBooks(prev => prev.filter(b => b.id !== showDeleteConfirm));
+        setSelectedBooks(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(showDeleteConfirm);
+          return newSet;
+        });
+      } catch (err: any) {
+        let msg = 'Löschen fehlgeschlagen.';
+        try {
+          const info = JSON.parse(err.message);
+          msg = `Löschen fehlgeschlagen: ${info.error}`;
+        } catch {}
+        setError(msg);
+      }
     }
+    setShowDeleteConfirm(null);
   };
 
-  const generateCharacterImage = async () => {
-    if (!result) return;
+  const generateCharacterImage = async (bookId: string, prompt: string, oldUrl?: string) => {
     setIsImageLoading(true);
     setError(null);
     try {
-      // Check for paid API key logic
-      // @ts-ignore - aistudio is injected in the environment
-      if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
-        // @ts-ignore
-        const hasKey = await window.aistudio.hasSelectedApiKey();
-        if (!hasKey) {
-          // @ts-ignore
-          await window.aistudio.openSelectKey();
-        }
+      const response = await fetch(`/api/buecher/${bookId}/regenerate-avatar`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${await auth.currentUser?.getIdToken()}`
+        },
+        body: JSON.stringify({ prompt, oldUrl })
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || "Bildgenerierung fehlgeschlagen.");
       }
 
-      const aiPaid = new GoogleGenAI({ apiKey: process.env.API_KEY || process.env.GEMINI_API_KEY! });
-
-      const response = await aiPaid.models.generateContent({
-        model: IMAGE_MODEL,
-        contents: {
-          parts: [{ text: result.hauptcharakter.bild_prompt_en }],
-        },
-        config: {
-          imageConfig: {
-            aspectRatio: "1:1",
-            imageSize: "1K"
-          },
-        },
-      });
-
-      let base64Image = '';
-      for (const part of response.candidates[0].content.parts) {
-        if (part.inlineData) {
-          base64Image = part.inlineData.data;
-          break;
-        }
-      }
-
-      if (!base64Image) throw new Error('Bild konnte nicht generiert werden.');
-
-      // Upload to Storage
-      const storageRef = ref(storage, `buecher/${result.id}/charakter_avatar.png`);
-      const blob = await fetch(`data:image/png;base64,${base64Image}`).then(r => r.blob());
-      await uploadBytes(storageRef, blob);
-      const url = await getDownloadURL(storageRef);
-
-      // Update Firestore
-      await updateDoc(doc(db, 'buecher', result.id), {
-        'hauptcharakter.avatar_url': url
-      });
-
-      await fetch('/api/track-cost', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          bookId: result.id,
-          usage: {
-            imageGenerated: true
-          }
-        })
-      });
-
-      setResult(prev => prev ? ({ ...prev, hauptcharakter: { ...prev.hauptcharakter, avatar_url: url } }) : null);
-    } catch (err) {
+      return data.avatar_url;
+    } catch (err: any) {
       console.error(err);
-      setError('Bildgenerierung oder Upload fehlgeschlagen.');
+      setError(`Fehler: ${err.message}`);
+      return null;
     } finally {
       setIsImageLoading(false);
     }
@@ -431,7 +478,7 @@ export default function App() {
 
         {activeTab === 'create' ? (
           <>
-            {currentUser?.email === ADMIN_EMAIL && <AdminDashboard />}
+            {currentUser?.email === ADMIN_EMAIL && <AdminDashboard allBooks={allBooks} />}
             <div className="mb-8 rounded-[40px] bg-white p-8 shadow-xl border-4 border-orange-50">
               <textarea
                 id="ideaTextarea"
@@ -472,11 +519,6 @@ export default function App() {
                       }`}
                     >
                       {titel}
-                      {currentUser?.email === ADMIN_EMAIL && result.cost_metrics && (
-                          <div className="mt-2 text-xs text-orange-700 bg-orange-50 rounded-full px-2 py-1">
-                            💰 Kosten: ${result.cost_metrics.total_cost_usd.toFixed(2)}
-                          </div>
-                      )}
                     </div>
                   ))}
                 </section>
@@ -486,15 +528,33 @@ export default function App() {
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                     <div className="rounded-3xl bg-yellow-50 p-6 border border-yellow-100">
                       <h3 className="text-xs font-bold uppercase tracking-widest text-yellow-600 mb-2">Anfang</h3>
-                      <p className="text-sm leading-relaxed text-yellow-900">{result.storyline.anfang}</p>
+                      <textarea
+                        className="w-full text-sm leading-relaxed text-yellow-900 bg-transparent resize-none outline-none"
+                        rows={6}
+                        value={result.storyline.anfang}
+                        onChange={(e) => setResult({ ...result, storyline: { ...result.storyline, anfang: e.target.value } })}
+                        onBlur={() => updateDoc(doc(db, 'buecher', result.id), { 'storyline.anfang': result.storyline.anfang })}
+                      />
                     </div>
                     <div className="rounded-3xl bg-pink-50 p-6 border border-pink-100">
                       <h3 className="text-xs font-bold uppercase tracking-widest text-pink-600 mb-2">Mitte</h3>
-                      <p className="text-sm leading-relaxed text-pink-900">{result.storyline.mitte}</p>
+                      <textarea
+                        className="w-full text-sm leading-relaxed text-pink-900 bg-transparent resize-none outline-none"
+                        rows={6}
+                        value={result.storyline.mitte}
+                        onChange={(e) => setResult({ ...result, storyline: { ...result.storyline, mitte: e.target.value } })}
+                        onBlur={() => updateDoc(doc(db, 'buecher', result.id), { 'storyline.mitte': result.storyline.mitte })}
+                      />
                     </div>
                     <div className="rounded-3xl bg-purple-50 p-6 border border-purple-100">
                       <h3 className="text-xs font-bold uppercase tracking-widest text-purple-600 mb-2">Ende</h3>
-                      <p className="text-sm leading-relaxed text-purple-900">{result.storyline.ende}</p>
+                      <textarea
+                        className="w-full text-sm leading-relaxed text-purple-900 bg-transparent resize-none outline-none"
+                        rows={6}
+                        value={result.storyline.ende}
+                        onChange={(e) => setResult({ ...result, storyline: { ...result.storyline, ende: e.target.value } })}
+                        onBlur={() => updateDoc(doc(db, 'buecher', result.id), { 'storyline.ende': result.storyline.ende })}
+                      />
                     </div>
                   </div>
                 </section>
@@ -507,20 +567,43 @@ export default function App() {
                       <p className="text-sm text-green-700"><strong>Persönlichkeit:</strong> {result.hauptcharakter.persoenlichkeit}</p>
                       <p className="mt-2 text-sm text-green-900 italic">{result.hauptcharakter.aussehen_de}</p>
                     </div>
-                    <div id="characterImagePlaceholder" className="flex-none w-48 h-48 rounded-2xl bg-white flex items-center justify-center text-slate-400 border-dashed border-4 border-slate-200 overflow-hidden">
-                      {isImageLoading ? (
-                        <div className="flex flex-col items-center">
-                          <div className="animate-spin text-4xl mb-2">⏳</div>
-                          <p className="text-[10px] text-center px-1">Nano Banana 2 zeichnet {result.hauptcharakter.name}...</p>
-                        </div>
-                      ) : result.hauptcharakter.avatar_url ? (
-                        <img src={result.hauptcharakter.avatar_url} alt="Held" className="w-full h-full object-cover" />
-                      ) : (
-                        <button onClick={generateCharacterImage} className="text-xs text-center p-2">Charakterbild generieren</button>
+                    <div className="flex flex-col items-center gap-4">
+                      <div id="characterImagePlaceholder" className="flex-none w-48 h-48 rounded-2xl bg-white flex items-center justify-center text-slate-400 border-dashed border-4 border-slate-200 overflow-hidden">
+                        {isImageLoading ? (
+                          <div className="flex flex-col items-center">
+                            <div className="animate-spin text-4xl mb-2">⏳</div>
+                            <p className="text-[10px] text-center px-1">Nano Banana 2 zeichnet {result.hauptcharakter.name}...</p>
+                          </div>
+                        ) : result.hauptcharakter.avatar_url ? (
+                          <img src={result.hauptcharakter.avatar_url} alt="Held" className="w-full h-full object-cover" />
+                        ) : (
+                          <button onClick={() => generateCharacterImage(result.id, result.hauptcharakter.bild_prompt_en)} className="text-xs text-center p-2">Charakterbild generieren</button>
+                        )}
+                      </div>
+                      
+                      {currentUser?.email === ADMIN_EMAIL && result.hauptcharakter.avatar_url && (
+                        <button 
+                          onClick={async () => {
+                            const newAvatarUrl = await generateCharacterImage(result.id, result.hauptcharakter.bild_prompt_en, result.hauptcharakter.avatar_url);
+                            if (newAvatarUrl) {
+                              setResult({...result, hauptcharakter: {...result.hauptcharakter, avatar_url: newAvatarUrl}});
+                            }
+                          }}
+                          disabled={isImageLoading}
+                          className="w-full max-w-48 rounded-full bg-white border border-slate-200 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors shadow-sm"
+                        >
+                          {isImageLoading ? "🔄 Generiere..." : "🔄 Bild neu generieren"}
+                        </button>
                       )}
                     </div>
                   </div>
                 </section>
+                
+                <div className="flex justify-center mt-12 pb-8">
+                  <button onClick={() => {}} className="px-8 py-4 rounded-full bg-slate-900 text-white font-bold text-lg shadow-[0_4px_0_rgb(15,23,42)] hover:-translate-y-1 hover:shadow-[0_6px_0_rgb(15,23,42)] active:translate-y-1 active:shadow-none transition-all cursor-pointer">
+                    Nächster Schritt: Buch ausarbeiten ➡️
+                  </button>
+                </div>
               </div>
             )}
           </>
@@ -549,6 +632,101 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm rounded-[32px] bg-white p-8 shadow-2xl">
+            <h3 className="mb-4 text-2xl font-bold text-slate-800">Wirklich löschen?</h3>
+            <p className="mb-8 text-slate-600">Diese Aktion kann nicht rückgängig gemacht werden.</p>
+            <div className="flex gap-4">
+              <button onClick={() => setShowDeleteConfirm(null)} className="flex-1 rounded-full bg-slate-100 py-3 font-bold text-slate-700 hover:bg-slate-200 cursor-pointer">Abbrechen</button>
+              <button onClick={confirmDelete} className="flex-1 rounded-full bg-red-500 py-3 font-bold text-white shadow-[0_4px_0_rgb(153,27,27)] hover:bg-red-600 active:translate-y-1 active:shadow-none cursor-pointer">Löschen</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Modal */}
+      {editingBook && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 overflow-y-auto">
+          <div className="w-full max-w-4xl rounded-[40px] bg-white p-8 shadow-2xl my-8 max-h-[90vh] overflow-y-auto">
+            <h3 className="mb-6 text-3xl font-bold text-slate-800">📖 Geschichte bearbeiten</h3>
+            
+            <div className="space-y-6">
+              <div>
+                <label className="block text-sm font-bold text-slate-500 mb-2 uppercase tracking-widest">Titel</label>
+                <input 
+                  type="text" 
+                  value={editingBook.ausgewaehlter_titel || editingBook.titel_optionen[0] || ""}
+                  onChange={(e) => setEditingBook({...editingBook, ausgewaehlter_titel: e.target.value})}
+                  className="w-full rounded-2xl bg-slate-50 border-2 border-slate-100 p-4 font-bold text-slate-800 text-xl focus:outline-none focus:border-orange-300 transition-colors"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="flex flex-col">
+                  <label className="block text-xs font-bold text-yellow-600 mb-2 uppercase tracking-widest">Anfang</label>
+                  <textarea 
+                    rows={8}
+                    value={editingBook.storyline.anfang}
+                    onChange={(e) => setEditingBook({...editingBook, storyline: {...editingBook.storyline, anfang: e.target.value}})}
+                    className="w-full flex-1 rounded-2xl bg-yellow-50 border border-yellow-100 p-4 text-sm text-yellow-900 leading-relaxed focus:outline-none focus:ring-2 focus:ring-yellow-300 resize-none"
+                  />
+                </div>
+                <div className="flex flex-col">
+                  <label className="block text-xs font-bold text-pink-600 mb-2 uppercase tracking-widest">Mitte</label>
+                  <textarea 
+                    rows={8}
+                    value={editingBook.storyline.mitte}
+                    onChange={(e) => setEditingBook({...editingBook, storyline: {...editingBook.storyline, mitte: e.target.value}})}
+                    className="w-full flex-1 rounded-2xl bg-pink-50 border border-pink-100 p-4 text-sm text-pink-900 leading-relaxed focus:outline-none focus:ring-2 focus:ring-pink-300 resize-none"
+                  />
+                </div>
+                <div className="flex flex-col">
+                  <label className="block text-xs font-bold text-purple-600 mb-2 uppercase tracking-widest">Ende</label>
+                  <textarea 
+                    rows={8}
+                    value={editingBook.storyline.ende}
+                    onChange={(e) => setEditingBook({...editingBook, storyline: {...editingBook.storyline, ende: e.target.value}})}
+                    className="w-full flex-1 rounded-2xl bg-purple-50 border border-purple-100 p-4 text-sm text-purple-900 leading-relaxed focus:outline-none focus:ring-2 focus:ring-purple-300 resize-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <button
+                  onClick={async () => {
+                    const newAvatarUrl = await generateCharacterImage(editingBook.id, editingBook.hauptcharakter.bild_prompt_en, editingBook.hauptcharakter.avatar_url);
+                    if (newAvatarUrl) {
+                      setEditingBook({...editingBook, hauptcharakter: {...editingBook.hauptcharakter, avatar_url: newAvatarUrl}});
+                    }
+                  }}
+                  disabled={isImageLoading}
+                  className="w-full rounded-2xl bg-slate-100 py-3 font-bold text-slate-700 hover:bg-slate-200 transition-colors"
+                >
+                  {isImageLoading ? "🔄 Generiere..." : "🔄 Bild neu generieren"}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex gap-4 mt-8 pt-6 border-t border-slate-100">
+              <button 
+                onClick={() => setEditingBook(null)} 
+                className="flex-1 rounded-full bg-slate-100 py-4 font-bold text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+              >
+                Abbrechen
+              </button>
+              <button 
+                onClick={() => handleUpdateBook(editingBook)} 
+                className="flex-1 rounded-full bg-orange-500 py-4 font-bold text-white shadow-[0_4px_0_rgb(194,65,12)] hover:bg-orange-400 active:translate-y-1 active:shadow-none transition-all cursor-pointer"
+              >
+                💾 Speichern
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
