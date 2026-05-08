@@ -12,24 +12,42 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Read firebase config properly
 let firebaseConfig: any = {};
 try {
-  const configContent = fs.readFileSync(path.join(__dirname, 'firebase-applet-config.json'), 'utf-8');
+  const configContent = fs.readFileSync(path.join(process.cwd(), 'firebase-applet-config.json'), 'utf-8');
   firebaseConfig = JSON.parse(configContent);
 } catch (e) {
-  console.log("Could not load firebase config.");
+  console.log("Could not load firebase config, check if firebase-applet-config.json exists in root.");
 }
 
 // Initialize Firebase Admin
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.applicationDefault(),
-    projectId: firebaseConfig.projectId,
-    storageBucket: firebaseConfig.storageBucket 
-  });
+let db: any;
+let bucket: any;
+
+function initFirebase() {
+  if (!admin.apps.length) {
+    try {
+      admin.initializeApp({
+        credential: admin.credential.applicationDefault(),
+        projectId: firebaseConfig.projectId,
+        storageBucket: firebaseConfig.storageBucket 
+      });
+      console.log("Firebase Admin initialized successfully.");
+    } catch (e) {
+      console.error("Firebase Admin initialization failed. Server-side Firebase Admin features will not work.", e);
+    }
+  }
+  if (admin.apps.length) {
+    db = admin.firestore();
+    bucket = admin.storage().bucket();
+  }
 }
-const db = admin.firestore();
-const bucket = admin.storage().bucket();
+
+initFirebase();
 
 async function updateBookCosts(bookId: string, usage: { promptTokens?: number, outputTokens?: number, imageGenerated?: boolean }) {
+  if (!db) {
+    console.warn("Firestore not initialized, skipping cost update.");
+    return;
+  }
   const bookRef = db.collection('buecher').doc(bookId);
   const bookDoc = await bookRef.get();
   
@@ -63,7 +81,7 @@ async function updateBookCosts(bookId: string, usage: { promptTokens?: number, o
 async function startServer() {
   const app = express();
   app.use(express.json());
-  const PORT = process.env.PORT || 3000;
+  const PORT = 3000;
 
   // Helper to ensure auth
   async function checkAdminAuth(req: any) {
@@ -94,7 +112,7 @@ async function startServer() {
 
       // A) Delete old image hard
       console.log(`[RegenerateAvatar] Attempting to delete old image...`);
-      if (oldUrl) {
+      if (oldUrl && bucket) {
         try {
           // parse the path from download url
           const urlObj = new URL(oldUrl);
@@ -157,6 +175,9 @@ async function startServer() {
       console.log(`[RegenerateAvatar] Successfully received image from API.`);
 
       // C) Upload and save
+      if (!bucket || !db) {
+        throw new Error("Firebase services (Storage/Firestore) not initialized. Please check credentials.");
+      }
       const newImagePath = `buecher/${bookId}/charakter_avatar.png`;
       console.log(`[RegenerateAvatar] Uploading new image to storage at: ${newImagePath}`);
       

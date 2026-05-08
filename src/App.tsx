@@ -52,6 +52,7 @@ interface BookPage {
   text: string;
   imagePrompt: string;
   imageUrl?: string;
+  layoutType?: 'text-only' | 'image-only' | 'stacked';
 }
 
 interface AusgearbeitetesBuch {
@@ -225,6 +226,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isImageLoading, setIsImageLoading] = useState(false);
   const [isGeneratingBook, setIsGeneratingBook] = useState(false);
+  const [generationStep, setGenerationStep] = useState<string>('');
   const [result, setResult] = useState<StoryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editingBook, setEditingBook] = useState<StoryResult | null>(null);
@@ -690,6 +692,7 @@ export default function App() {
   const handleGenerateBook = async () => {
     if (!selectedSkriptForBook) return;
     setIsGeneratingBook(true);
+    setGenerationStep('Die Geschichte wird gewebt...');
     setError(null);
     try {
       const count = (selectedSkriptForBook.erzeugteBuecherCount || 0);
@@ -723,14 +726,16 @@ Bildanteil: ${bildanteil}
 Charakter: ${JSON.stringify(selectedSkriptForBook.hauptcharakter)}
 Storyline: ${JSON.stringify(selectedSkriptForBook.storyline)}
 
-Teile die Storyline auf EXAKT ${seitenAnzahl} Seiten auf. Passe den Wortschatz an das Zielalter und den Schreibstil an die Stimmung an (z.B. "lustig" = humorvoll, "träumerisch" = sanfte Sprache). Berücksichtige zwingend die Inhaltsdichte!
+LAYOUT-REGELN:
+- Für "2-4 Jahre" und "4-6 Jahre": Trenne Bild und Text strikt auf separate Seiten (layoutType "text-only" oder "image-only").
+  Das Buch MUSS abwechselnd aus Text- und Bildseiten bestehen (Seite 1: Text, Seite 2: Bild, Seite 3: Text...).
+  Bei Text-Seiten: Erhöhe die Erzähltiefe (3-5 Sätze für 2-4J, 5-8 Sätze für 4-6J). Das Feld 'imagePrompt' bleibt leer ("").
+  Bei Bild-Seiten: Das Feld 'text' bleibt leer (""). Erzeuge einen hochqualitativen 'imagePrompt'.
+- Für "6-8 Jahre": Nutze layoutType "stacked". Hier sind Bild und Text auf JEDER Seite (Bild oben, Text unten).
 
-VISUELLE KONSISTENZ: Analysiere für jede Seite separat, ob der Hauptcharakter in dieser spezifischen Szene vorkommen MUSS.
-- Wenn JA: Injiziere seine Charakterbeschreibung ("${selectedSkriptForBook.hauptcharakter?.aussehen_de}") prominent in den englischen 'imagePrompt'.
-- Wenn NEIN: Generiere ein reines Szenen-Bild (ohne den Hauptcharakter), das exakt denselben künstlerischen Stil nutzt.
-
-HÄNGE AN JEDEN imagePrompt DIESEN ANTI-TEXT-RIEGEL AN:
-", absolutely no text, no letters, no words, no typography, no signatures, clean character digital art style, perfect illustration"
+VISUELLE KONSISTENZ: Analysiere für jede Bild-Anforderung separat, ob der Hauptcharakter vorkommen MUSS.
+- Wenn JA: Injiziere seine Beschreibung ("${selectedSkriptForBook.hauptcharakter?.aussehen_de}") prominent in den englischen 'imagePrompt'.
+- HÄNGE AN JEDEN imagePrompt DIESEN ANTI-TEXT-RIEGEL AN: ", absolutely no text, no letters, no words, no typography, no signatures, clean character digital art style, perfect illustration"
 
 Dein Output MUSS exakt dieses JSON-Format haben:
 {
@@ -738,9 +743,17 @@ Dein Output MUSS exakt dieses JSON-Format haben:
   "seiten": [
     {
       "pageNumber": 1,
+      "layoutType": "text-only", 
       "text": "Der Text für diese Seite...",
-      "imagePrompt": "Der Bild-Prompt auf Englisch..."
+      "imagePrompt": ""
+    },
+    {
+      "pageNumber": 2,
+      "layoutType": "image-only",
+      "text": "",
+      "imagePrompt": "Der Bild-Prompt..."
     }
+    // ... insgesamt genau ${seitenAnzahl} Seiten
   ]
 }
 `;
@@ -762,20 +775,47 @@ Dein Output MUSS exakt dieses JSON-Format haben:
       });
 
       let txt = response.text || "{}";
-      if (txt.startsWith('\`\`\`json')) txt = txt.slice(7);
-      else if (txt.startsWith('\`\`\`')) txt = txt.slice(3);
-      if (txt.endsWith('\`\`\`')) txt = txt.slice(0, -3);
-      txt = txt.trim();
-
-      const parsed = JSON.parse(txt);
+      const cleanJson = txt.replace(/```json\n?|\n?```/g, '').trim();
+      const parsed = JSON.parse(cleanJson);
       
+      // --- EDITORIAL CHECK (Word Budget) ---
+      const wordLimit = zielalter === '2-4 Jahre' ? 20 : (zielalter === '4-6 Jahre' ? 35 : 40);
+      let pages = (parsed.seiten || []) as BookPage[];
+      
+      let needsCorrection = false;
+      for (const p of pages) {
+        if (p.text && p.text.split(/\s+/).filter(w => w.length > 0).length > wordLimit) {
+            needsCorrection = true;
+            break;
+        }
+      }
+
+      if (needsCorrection) {
+        setGenerationStep('Waschbär Paul feilt noch an den feinsten Sätzen... ✏️');
+        for (let i = 0; i < pages.length; i++) {
+          const words = pages[i].text.split(/\s+/).filter(w => w.length > 0);
+          if (words.length > wordLimit) {
+            const correctionPrompt = `Du bist ein professioneller Kinderbuch-Lektor. Kürze den folgenden Text für die Altersgruppe "${zielalter}" auf MAXIMAL ${wordLimit} Wörter. Behalte den emotionalen Kern und die Story-Kontinuität bei. Antworte NUR mit dem gekürzten Text, ohne Metatext oder Erklärungen.\n\nText: "${pages[i].text}"`;
+            
+            const correctionRes = await ai.models.generateContent({
+              model: MODEL_NAME,
+              contents: correctionPrompt
+            });
+            
+            if (correctionRes.text) {
+              pages[i].text = correctionRes.text.trim();
+            }
+          }
+        }
+      }
+
       const newBookData = {
         skriptId: selectedSkriptForBook.id,
         titel: parsed.titel || "Neues Buch",
         zielalter,
         stimmung,
         seitenAnzahl,
-        seiten: parsed.seiten || [],
+        seiten: pages,
         coverImage: selectedSkriptForBook.hauptcharakter?.avatar_url || null,
         isFavorite: false,
         labels: [],
@@ -1026,6 +1066,22 @@ Dein Output MUSS exakt dieses JSON-Format haben:
         ) : null}
       </main>
 
+      {/* Book Generation Loading Overlay */}
+      {isGeneratingBook && (
+        <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-indigo-900/90 backdrop-blur-md p-8 text-center">
+            <div className="w-24 h-24 bg-white/20 rounded-full flex items-center justify-center animate-bounce mb-8 shadow-2xl">
+              <span className="text-5xl">📖</span>
+            </div>
+            <h2 className="text-3xl font-bold text-white mb-4">{generationStep}</h2>
+            <div className="flex gap-2">
+              <div className="w-3 h-3 bg-white rounded-full animate-bounce delay-75"></div>
+              <div className="w-3 h-3 bg-white rounded-full animate-bounce delay-150"></div>
+              <div className="w-3 h-3 bg-white rounded-full animate-bounce delay-300"></div>
+            </div>
+            <p className="mt-8 text-indigo-200 text-sm italic">"Geduld ist die Zauberzutat für gute Geschichten..."</p>
+        </div>
+      )}
+
       {/* Configurator Modal */}
       {selectedSkriptForBook && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
@@ -1250,34 +1306,83 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                 
                 if (!isRendered) return null;
 
-                const age = readingBook.zielalter || '';
-                const layoutStyles = {
-                  '2-4 Jahre': { img: 'flex-[4]', txt: 'flex-1' },
-                  '4-6 Jahre': { img: 'flex-[13]', txt: 'flex-[7]' },
-                  '6-8 Jahre': { img: 'flex-1', txt: 'flex-1' },
-                }[age] || { img: 'flex-[2]', txt: 'flex-1' };
+                const age = readingBook.zielalter || '4-6 Jahre';
+                const layoutType = seite.layoutType || (age === '6-8 Jahre' ? 'stacked' : (idx % 2 === 0 ? 'text-only' : 'image-only'));
 
+                if (layoutType === 'image-only') {
+                   return (
+                     <div 
+                        key={idx} 
+                        className="absolute w-full h-[85%] px-0 flex flex-col transition-transform duration-300 ease-in-out"
+                        style={{ transform: `translateX(${translatePercent}%)`, opacity: isActive ? 1 : 0.3 }}
+                      >
+                        <div className="flex-1 bg-slate-900 overflow-hidden relative shadow-2xl rounded-[32px]">
+                           {seite.imageUrl ? (
+                              <img src={seite.imageUrl} alt={`Seite ${idx + 1}`} className="w-full h-full object-cover" loading="lazy" />
+                            ) : (
+                               <div className="flex flex-col items-center justify-center h-full w-full bg-slate-100 text-slate-500 p-6 text-center italic">
+                                  "{seite.imagePrompt}"
+                               </div>
+                            )}
+                            <p className="absolute bottom-4 right-4 text-xs text-white/50 bg-black/30 px-2 py-1 rounded-full">{idx + 1} / {readingBook.seiten.length}</p>
+                        </div>
+                      </div>
+                   )
+                }
+
+                if (layoutType === 'text-only') {
+                    return (
+                       <div 
+                        key={idx} 
+                        className="absolute w-full h-[85%] px-4 md:px-8 flex flex-col transition-transform duration-300 ease-in-out"
+                        style={{ transform: `translateX(${translatePercent}%)`, opacity: isActive ? 1 : 0.3 }}
+                      >
+                         <div className="flex-1 bg-[#fdf9f0] text-slate-800 rounded-[32px] p-8 md:p-16 shadow-2xl flex flex-col justify-center items-center relative border border-orange-100/50">
+                            {editingPageIdx === idx ? (
+                                <>
+                                  <textarea 
+                                    className="bg-white/50 text-slate-800 p-6 rounded-2xl w-full flex-1 focus:outline-none resize-none text-xl md:text-2xl font-serif text-center"
+                                    value={editingText}
+                                    onChange={(e) => setEditingText(e.target.value)}
+                                  />
+                                  <button onClick={() => handleSavePageText(idx)} className="mt-4 bg-emerald-500 text-white px-8 py-3 rounded-full font-bold">Speichern ✓</button>
+                                </>
+                            ) : (
+                                <>
+                                   <p className="text-2xl md:text-3xl lg:text-4xl font-serif text-center leading-[1.6] text-slate-800">{seite.text}</p>
+                                   <button 
+                                      className="absolute top-6 right-6 bg-orange-100 text-orange-600 rounded-full w-10 h-10 flex items-center justify-center hover:bg-orange-200 transition cursor-pointer"
+                                      onClick={() => { setEditingPageIdx(idx); setEditingText(seite.text); }}
+                                    >
+                                      ✏️
+                                    </button>
+                                </>
+                            )}
+                            <p className="absolute bottom-6 text-xs text-slate-400 font-bold">{idx + 1} / {readingBook.seiten.length}</p>
+                         </div>
+                      </div>
+                    )
+                }
+
+                // Default / Stacked (6-8 Jahre)
                 return (
                   <div 
                     key={idx} 
-                    className="absolute w-full h-[85%] px-4 md:px-8 flex flex-col md:flex-row transition-transform duration-300 ease-in-out"
+                    className="absolute w-full h-[85%] px-4 md:px-8 flex flex-col transition-transform duration-300 ease-in-out overflow-hidden"
                     style={{ transform: `translateX(${translatePercent}%)`, opacity: isActive ? 1 : 0.3 }}
                   >
-                    <div className={`${layoutStyles.img} bg-white rounded-t-[32px] md:rounded-l-[32px] md:rounded-tr-none overflow-hidden flex items-center justify-center relative shadow-xl`}>
+                    <div className="flex-[6] bg-white rounded-t-[32px] overflow-hidden flex items-center justify-center relative shadow-md">
                       {seite.imageUrl ? (
                         <img src={seite.imageUrl} alt={`Seite ${idx + 1}`} className="w-full h-full object-cover" loading="lazy" />
                       ) : (
-                         <div className="flex flex-col items-center justify-center h-full w-full bg-slate-100 text-slate-500 p-6 overflow-hidden">
-                           <span className="text-sm border-2 border-dashed border-slate-300 p-4 rounded-3xl overflow-auto text-center italic w-full h-full">"{seite.imagePrompt}"</span>
-                           <button className="bg-indigo-500 text-white px-6 py-3 rounded-full font-bold shadow-sm transition-colors hover:bg-indigo-600 mt-4 cursor-pointer">Bilder zaubern (Demnächst)</button>
-                         </div>
+                         <div className="bg-slate-100 w-full h-full flex flex-col items-center justify-center p-4 italic text-sm text-slate-400 text-center">"{seite.imagePrompt}"</div>
                       )}
                     </div>
-                    <div className={`${layoutStyles.txt} overflow-y-auto bg-slate-800 rounded-b-[32px] md:rounded-r-[32px] md:rounded-bl-none p-6 shadow-2xl z-10 border-t-4 md:border-t-0 md:border-l-4 border-slate-900 leading-relaxed flex flex-col relative`}>
+                    <div className="flex-[4] overflow-y-auto bg-slate-800 rounded-b-[32px] p-6 shadow-2xl z-10 border-t-4 border-slate-900 leading-relaxed flex flex-col relative text-white">
                       {editingPageIdx === idx ? (
                         <>
                           <textarea 
-                            className="bg-slate-700 text-white p-3 rounded-xl w-full flex-1 focus:outline-none resize-none mt-6"
+                            className="bg-slate-700 text-white p-3 rounded-xl w-full flex-1 focus:outline-none resize-none"
                             value={editingText}
                             onChange={(e) => setEditingText(e.target.value)}
                           />
@@ -1299,7 +1404,7 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                           </button>
                         </>
                       )}
-                      <p className="text-right text-xs text-slate-500 mt-4 shrink-0">{idx + 1} / {readingBook.seiten.length}</p>
+                      <p className="text-right text-xs text-slate-500 mt-2">{idx + 1} / {readingBook.seiten.length}</p>
                     </div>
                   </div>
                 );
