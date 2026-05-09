@@ -118,123 +118,11 @@ interface StoryResult {
   };
 }
 
-const AdminDashboard = ({ allBooks }: { allBooks: StoryResult[] }) => {
-  const [liveSpend, setLiveSpend] = useState<number | null>(null);
-  const [isLiveLoading, setIsLiveLoading] = useState(false);
-  const [dashboardError, setDashboardError] = useState<string | null>(null);
-
-  const handleFetchLiveBilling = async () => {
-    setIsLiveLoading(true);
-    setDashboardError(null);
-    try {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) {
-        throw new Error("Nicht authentifiziert. Bitte regulär mit Google anmelden.");
-      }
-      const response = await fetch('/api/admin/live-billing', {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || "Abfrage fehlgeschlagen");
-      }
-
-      const data = await response.json();
-      if (data.currentSpend !== undefined) {
-        setLiveSpend(data.currentSpend);
-      }
-    } catch (err: any) {
-      console.error("Live billing error:", err);
-      setDashboardError(err.message || "Unbekannter Fehler bei der Abfrage.");
-    } finally {
-      setIsLiveLoading(false);
-    }
-  };
-
-  const stats = useMemo(() => {
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    
-    let total = 0;
-    let last30Days = 0;
-    let totalInputTokens = 0;
-    let totalOutputTokens = 0;
-
-    allBooks.forEach(book => {
-      if (!book.cost_metrics) return;
-      total += book.cost_metrics.total_cost_usd;
-      totalInputTokens += book.cost_metrics.text_input_tokens;
-      totalOutputTokens += book.cost_metrics.text_output_tokens;
-      
-      // @ts-ignore
-      const createdAt = book.created_at?.toDate ? book.created_at.toDate() : (book.created_at ? new Date(book.created_at) : null);
-      if (createdAt && createdAt >= thirtyDaysAgo) {
-        last30Days += book.cost_metrics.total_cost_usd;
-      }
-    });
-    return { total, last30Days, totalInputTokens, totalOutputTokens };
-  }, [allBooks]);
-
-  return (
-    <div className="space-y-4 mb-8">
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-        <div className="rounded-3xl bg-white p-6 border border-orange-100 shadow-sm transition-all hover:border-orange-200">
-          <h3 className="text-sm font-bold text-orange-500 uppercase tracking-widest mb-1">💰 Gesamtausgaben</h3>
-          <p className="text-3xl font-bold text-slate-800">${stats.total.toFixed(2)}</p>
-        </div>
-        <div className="rounded-3xl bg-white p-6 border border-slate-100 shadow-sm">
-          <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">📅 Letzte 30 Tage</h3>
-          <p className="text-3xl font-bold text-slate-800">${stats.last30Days.toFixed(2)}</p>
-        </div>
-        <div className="rounded-3xl bg-white p-6 border border-slate-100 shadow-sm">
-          <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">📥 Input Tokens</h3>
-          <p className="text-3xl font-bold text-slate-800">{stats.totalInputTokens.toLocaleString()}</p>
-        </div>
-        <div className="rounded-3xl bg-white p-6 border border-slate-100 shadow-sm">
-          <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-1">📤 Output Tokens</h3>
-          <p className="text-3xl font-bold text-slate-800">{stats.totalOutputTokens.toLocaleString()}</p>
-        </div>
-      </div>
-
-      <div className="flex flex-col md:flex-row md:items-center gap-4 p-4 bg-white rounded-3xl border border-slate-100 shadow-sm animate-in fade-in duration-500">
-        <button 
-          onClick={handleFetchLiveBilling}
-          disabled={isLiveLoading}
-          className="flex items-center justify-center gap-2 px-6 py-3 bg-slate-800 text-white font-bold rounded-full transition-all active:scale-95 disabled:bg-slate-300 shadow-[0_4px_0_rgb(30,41,59)] active:translate-y-1 active:shadow-none h-12 min-w-[260px] cursor-pointer"
-        >
-          {isLiveLoading ? (
-            <span className="animate-spin text-xl">🔄</span>
-          ) : "🔄 Live-Cloud-Konto abfragen"}
-        </button>
-        
-        {liveSpend !== null && !dashboardError && (
-          <div className="animate-in fade-in slide-in-from-left-4 duration-500">
-            <p className="text-lg font-bold text-slate-800">
-              Live-Verbrauch laut Google: <span className="text-orange-600">${liveSpend.toFixed(2)}</span>
-            </p>
-            <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-tighter leading-tight">
-              Hinweis: Google aktualisiert diese API-Werte mit einer systembedingten Verzögerung von 1-3 Stunden.
-            </p>
-          </div>
-        )}
-
-        {dashboardError && (
-          <p className="text-sm font-medium text-red-500 animate-in shake">
-            ❌ {dashboardError}
-          </p>
-        )}
-      </div>
-    </div>
-  );
-};
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [allBooks, setAllBooks] = useState<StoryResult[]>([]);
-  const [activeTab, setActiveTab] = useState<'create' | 'library' | 'books'>('create');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'create' | 'library' | 'books'>('dashboard');
   const [isDevMode, setIsDevMode] = useState(false);
   const [idea, setIdea] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -274,6 +162,81 @@ export default function App() {
   });
   const [isEditingLabels, setIsEditingLabels] = useState(false);
   const [editingCustomLabels, setEditingCustomLabels] = useState<CustomLabel[]>([...customLabels]);
+
+  const stats = useMemo(() => {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    let total = 0;
+    let last30Days = 0;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+
+    allBooks.forEach(book => {
+      if (!book.cost_metrics) return;
+      total += book.cost_metrics.total_cost_usd;
+      totalInputTokens += book.cost_metrics.text_input_tokens;
+      totalOutputTokens += book.cost_metrics.text_output_tokens;
+      
+      // @ts-ignore
+      const createdAt = book.created_at?.toDate ? book.created_at.toDate() : (book.created_at ? new Date(book.created_at) : null);
+      if (createdAt && createdAt >= thirtyDaysAgo) {
+        last30Days += book.cost_metrics.total_cost_usd;
+      }
+    });
+    return { total, last30Days, totalInputTokens, totalOutputTokens };
+  }, [allBooks]);
+
+  const Dashboard = () => {
+    const [liveSpend, setLiveSpend] = useState<number | null>(null);
+
+    useEffect(() => {
+        async function fetchBilling() {
+            try {
+                const token = await auth.currentUser?.getIdToken();
+                if (!token) return;
+                const response = await fetch('/api/admin/live-billing', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    setLiveSpend(data.currentSpend);
+                }
+            } catch (e) {
+                console.error("Billing fetch failed, falling back to local estimate.", e);
+            }
+        }
+        fetchBilling();
+    }, []);
+
+    return (
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6">
+        <button onClick={() => setActiveTab('create')} className="bg-white p-8 rounded-[32px] shadow-sm border border-slate-100 hover:border-orange-200 transition-all flex flex-col items-center gap-4 text-center cursor-pointer">
+          <span className="text-5xl">✍️</span>
+          <span className="font-bold text-xl text-slate-800">Neue Geschichte schreiben</span>
+        </button>
+        <button onClick={() => setActiveTab('library')} className="bg-white p-8 rounded-[32px] shadow-sm border border-slate-100 hover:border-orange-200 transition-all flex flex-col items-center gap-4 text-center cursor-pointer">
+          <span className="text-5xl">📜</span>
+          <span className="font-bold text-xl text-slate-800">Meine Kurzskripte ({allBooks.length})</span>
+        </button>
+        <button onClick={() => setActiveTab('books')} className="bg-white p-8 rounded-[32px] shadow-sm border border-slate-100 hover:border-orange-200 transition-all flex flex-col items-center gap-4 text-center cursor-pointer">
+          <span className="text-5xl">📚</span>
+          <span className="font-bold text-xl text-slate-800">Meine Bücher ({allFinishedBooks.length})</span>
+        </button>
+        <button onClick={() => setIsBackupManagerOpen(true)} className="bg-white p-8 rounded-[32px] shadow-sm border border-slate-100 hover:border-orange-200 transition-all flex flex-col items-center gap-4 text-center cursor-pointer">
+          <span className="text-5xl">💾</span>
+          <span className="font-bold text-xl text-slate-800">Backup-Manager</span>
+        </button>
+      </div>
+
+      <div className="bg-white p-6 rounded-3xl border border-slate-100 flex items-center justify-between shadow-sm">
+        <div className="text-sm font-bold text-slate-400 uppercase tracking-widest">Kostenübersicht {liveSpend !== null ? '(Live)' : '(Geschätzt)'}</div>
+        <div className="font-bold text-slate-800">{liveSpend !== null ? `$${liveSpend.toFixed(2)}` : `$${stats.total.toFixed(2)}`}</div>
+      </div>
+    </div>
+  );
+};
 
   useEffect(() => {
     localStorage.setItem('jammi_custom_labels', JSON.stringify(customLabels));
@@ -1034,7 +997,7 @@ Dein Output MUSS exakt dieses JSON-Format haben:
         created_at: serverTimestamp()
       };
       
-      await addDoc(collection(db, 'ausgearbeitete_buecher'), newBookData);
+      const docRef = await addDoc(collection(db, 'ausgearbeitete_buecher'), newBookData);
       
       const newCount = count + 1;
       await updateDoc(doc(db, 'buecher', selectedSkriptForBook.id), { erzeugteBuecherCount: newCount });
@@ -1043,6 +1006,7 @@ Dein Output MUSS exakt dieses JSON-Format haben:
       setActiveTab('books');
       fetchBooks();
       fetchFinishedBooks();
+      setReadingBook({ id: docRef.id, ...newBookData } as AusgearbeitetesBuch);
     } catch (err: any) {
       console.error(err);
       setError(err.message);
@@ -1094,14 +1058,14 @@ Dein Output MUSS exakt dieses JSON-Format haben:
       
       <main className="mx-auto max-w-3xl">
         <div className="hidden md:flex gap-2 sm:gap-4 border-b border-orange-200 mb-8 overflow-x-auto pb-2 scrollbar-hide">
+          <button onClick={() => setActiveTab('dashboard')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'dashboard' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>Start</button>
           <button onClick={() => setActiveTab('create')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'create' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>Neue Geschichte</button>
           <button onClick={() => setActiveTab('library')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'library' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>Meine Kurzskripte ({allBooks.length})</button>
           <button onClick={() => setActiveTab('books')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'books' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>Bücher ({allFinishedBooks.length})</button>
         </div>
 
-        {activeTab === 'create' ? (
+        {activeTab === 'dashboard' ? <Dashboard /> : activeTab === 'create' ? (
           <>
-            {currentUser?.email === ADMIN_EMAIL && <AdminDashboard allBooks={allBooks} />}
             <div className="mb-8 rounded-[40px] bg-white p-8 shadow-xl border-4 border-orange-50">
               <textarea
                 id="ideaTextarea"
@@ -1665,7 +1629,7 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                                 </>
                             ) : (
                                 <>
-                                   <p className="text-2xl md:text-3xl lg:text-4xl font-serif text-center leading-[1.6] text-slate-800">{seite.text}</p>
+                                   <p className={`font-serif text-center leading-[1.6] text-slate-800 ${seite.text.length < 150 ? 'text-2xl md:text-3xl lg:text-4xl' : (seite.text.length < 250 ? 'text-xl md:text-2xl lg:text-3xl' : 'text-base md:text-lg lg:text-xl')}`}>{seite.text}</p>
                                    <button 
                                       className="absolute top-6 right-6 bg-orange-100 text-orange-600 rounded-full w-10 h-10 flex items-center justify-center hover:bg-orange-200 transition cursor-pointer"
                                       onClick={() => { setEditingPageIdx(idx); setEditingText(seite.text); }}
