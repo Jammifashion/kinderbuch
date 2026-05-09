@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { db, auth, storage } from './lib/firebase';
+import { useLanguage } from './LanguageContext';
 import { collection, addDoc, serverTimestamp, getDocs, updateDoc, doc, deleteDoc, getDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
@@ -129,6 +130,7 @@ interface StoryResult {
 
 
 export default function App() {
+  const { language, setLanguage, t } = useLanguage();
   const [user, setUser] = useState<User | null>(null);
   const [allBooks, setAllBooks] = useState<StoryResult[]>([]);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'create' | 'library' | 'books'>('dashboard');
@@ -199,10 +201,10 @@ export default function App() {
 
   const Dashboard = () => {
     const [liveSpend, setLiveSpend] = useState<number | null>(null);
-    const [isLoading, setIsLoading] = useState(false);
+    const [isLoadingStats, setIsLoadingStats] = useState(false);
 
     async function fetchBilling() {
-        setIsLoading(true);
+        setIsLoadingStats(true);
         try {
             const token = await auth.currentUser?.getIdToken();
             if (!token) return;
@@ -216,7 +218,7 @@ export default function App() {
         } catch (e) {
             console.error("Billing fetch failed, falling back to local estimate.", e);
         } finally {
-            setIsLoading(false);
+            setIsLoadingStats(false);
         }
     }
 
@@ -225,28 +227,28 @@ export default function App() {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6">
         <button onClick={() => setActiveTab('create')} className="bg-white p-8 rounded-[32px] shadow-sm border border-slate-100 hover:border-orange-200 transition-all flex flex-col items-center gap-4 text-center cursor-pointer">
           <span className="text-5xl">✍️</span>
-          <span className="font-bold text-xl text-slate-800">Neue Geschichte schreiben</span>
+          <span className="font-bold text-xl text-slate-800">{t('dashboard.new_story')}</span>
         </button>
         <button onClick={() => setActiveTab('library')} className="bg-white p-8 rounded-[32px] shadow-sm border border-slate-100 hover:border-orange-200 transition-all flex flex-col items-center gap-4 text-center cursor-pointer">
           <span className="text-5xl">📜</span>
-          <span className="font-bold text-xl text-slate-800">Meine Kurzskripte ({allBooks.length})</span>
+          <span className="font-bold text-xl text-slate-800">{t('dashboard.my_scripts')} ({allBooks.length})</span>
         </button>
         <button onClick={() => setActiveTab('books')} className="bg-white p-8 rounded-[32px] shadow-sm border border-slate-100 hover:border-orange-200 transition-all flex flex-col items-center gap-4 text-center cursor-pointer">
           <span className="text-5xl">📚</span>
-          <span className="font-bold text-xl text-slate-800">Meine Bücher ({allFinishedBooks.length})</span>
+          <span className="font-bold text-xl text-slate-800">{t('dashboard.my_books')} ({allFinishedBooks.length})</span>
         </button>
         <button onClick={() => setIsBackupManagerOpen(true)} className="bg-white p-8 rounded-[32px] shadow-sm border border-slate-100 hover:border-orange-200 transition-all flex flex-col items-center gap-4 text-center cursor-pointer">
           <span className="text-5xl">💾</span>
-          <span className="font-bold text-xl text-slate-800">Backup-Manager</span>
+          <span className="font-bold text-xl text-slate-800">{t('dashboard.backup_manager')}</span>
         </button>
       </div>
 
       <div className="bg-white p-6 rounded-3xl border border-slate-100 flex items-center justify-between shadow-sm">
-        <div className="text-sm font-bold text-slate-400 uppercase tracking-widest">Kostenübersicht {liveSpend !== null ? '(Live)' : '(Geschätzt)'}</div>
+        <div className="text-sm font-bold text-slate-400 uppercase tracking-widest">{t('dashboard.cost_overview')} {liveSpend !== null ? t('dashboard.live') : t('dashboard.estimated')}</div>
         <div className="flex items-center gap-4">
             {liveSpend === null && (
-                <button onClick={fetchBilling} disabled={isLoading} className="text-xs text-orange-600 font-bold hover:underline cursor-pointer">
-                    {isLoading ? 'Lade...' : 'Kosten ermitteln'}
+                <button onClick={fetchBilling} disabled={isLoadingStats} className="text-xs text-orange-600 font-bold hover:underline cursor-pointer">
+                    {isLoadingStats ? t('common.loading') : t('dashboard.fetch_costs')}
                 </button>
             )}
             <div className="font-bold text-slate-800">{liveSpend !== null ? `$${liveSpend.toFixed(2)}` : `$${stats.total.toFixed(2)}`}</div>
@@ -368,16 +370,32 @@ export default function App() {
   if (!currentUser) {
     return (
       <div className="flex h-screen flex-col items-center justify-center bg-[#FFFDF2] p-4 text-center">
+        <div className="mb-4 flex gap-2 p-1 bg-white rounded-full shadow-sm border border-slate-100">
+          <button 
+            onClick={() => setLanguage('de')} 
+            className={`w-10 h-10 flex items-center justify-center rounded-full transition-all ${language === 'de' ? 'bg-orange-100 scale-110 shadow-inner' : 'grayscale opacity-50 hover:grayscale-0 hover:opacity-100'}`}
+            title="Deutsch"
+          >
+            🇩🇪
+          </button>
+          <button 
+            onClick={() => setLanguage('en')} 
+            className={`w-10 h-10 flex items-center justify-center rounded-full transition-all ${language === 'en' ? 'bg-orange-100 scale-110 shadow-inner' : 'grayscale opacity-50 hover:grayscale-0 hover:opacity-100'}`}
+            title="English"
+          >
+            EN
+          </button>
+        </div>
         <div className="mb-8 flex flex-col items-center animate-in fade-in zoom-in duration-1000">
           <div className="w-24 h-24 bg-white rounded-[32px] shadow-xl flex items-center justify-center text-5xl mb-6 border-4 border-orange-50">📖</div>
-          <h1 className="text-6xl font-magic text-slate-900 mb-2 drop-shadow-sm">Fably</h1>
-          <p className="text-slate-500 font-medium tracking-wide border-t border-slate-100 pt-2 px-4 uppercase text-[10px]">Dein magischer Buchgenerator</p>
+          <h1 className="text-6xl font-magic text-slate-900 mb-2 drop-shadow-sm">{t('common.app_name')}</h1>
+          <p className="text-slate-500 font-medium tracking-wide border-t border-slate-100 pt-2 px-4 uppercase text-[10px]">{t('common.tagline')}</p>
         </div>
         <button onClick={handleLogin} className="w-full max-w-xs rounded-full bg-orange-500 px-8 py-5 text-xl font-bold text-white shadow-[0_8px_0_rgb(194,65,12)] hover:-translate-y-1 hover:shadow-[0_10px_0_rgb(194,65,12)] active:translate-y-1 active:shadow-none transition-all cursor-pointer">
-          Mit Google anmelden
+          {t('common.login')}
         </button>
         <p className="text-[10px] text-stone-400 text-center max-w-sm mt-8 leading-relaxed">
-          Hinweis: Falls das Login-Fenster nicht erscheint, öffne die Vorschau in einem neuen Tab (Symbol oben rechts).
+          {t('common.login_hint')}
         </p>
       </div>
     );
@@ -387,21 +405,37 @@ export default function App() {
     return (
       <div className="flex h-screen items-center justify-center bg-[#FFFDF2] p-6 text-center">
         <div className="rounded-[40px] bg-white p-10 shadow-xl">
-          <h1 className="text-3xl font-bold text-orange-600">Zutritt verweigert</h1>
-          <p className="mt-4 text-slate-500">Du hast leider keine Berechtigung für diese App.</p>
-          <button onClick={() => { signOut(auth); setIsDevMode(false); }} className="mt-6 rounded-full bg-slate-200 px-6 py-2">Ausloggen</button>
+          <h1 className="text-3xl font-bold text-orange-600">{t('common.access_denied')}</h1>
+          <p className="mt-4 text-slate-500">{t('common.no_permission')}</p>
+          <button onClick={() => { signOut(auth); setIsDevMode(false); }} className="mt-6 rounded-full bg-slate-200 px-6 py-2">{t('common.logout')}</button>
         </div>
       </div>
     );
   }
+
+  // --- Translation Helper ---
+  const getTranslatedLabel = (key: 'zielalter' | 'stimmung', value: string) => {
+      if (key === 'zielalter') {
+          if (value === '2-4 Jahre' || value === '2-4 Years') return t('create.age_2_4');
+          if (value === '4-6 Jahre' || value === '4-6 Years') return t('create.age_4_6');
+          if (value === '6-8 Jahre' || value === '6-8 Years') return t('create.age_6_8');
+      }
+      if (key === 'stimmung') {
+          if (value === 'Lustig' || value === 'Funny') return t('create.mood_funny');
+          if (value === 'Träumerisch' || value === 'Dreamy') return t('create.mood_dreamy');
+          if (value === 'Lehrreich' || value === 'Educational') return t('create.mood_educational');
+          if (value === 'Spannend' || value === 'Exciting') return t('create.mood_exciting');
+      }
+      return value;
+  };
 
   // --- Handlers ---
   const handleGenerateInspiration = async () => {
     setIsInspirationLoading(true);
     try {
       const prompt = idea.trim().length > 0
-        ? `Nimm diese Stichworte: '${idea}'. Baue daraus eine einzige, extrem fesselnde, magische und kindgerechte Ausgangslage (maximal 1-2 Sätze) für ein Kinderbuch. Der Ton soll warm, einladend und kreativ sein. Gib NUR den fertigen Vorschlagstext zurück, keinen anderen Text drumherum.`
-        : `Generiere eine völlig zufällige, wunderschöne und kreative Ausgangslage (1-2 Sätze) für ein Kinderbuch. Nutze Themen wie mutige Tiere, lebendige Natur, freundliche Roboter, Weltraumabenteuer oder magische Welten. Gib NUR den fertigen Vorschlagstext zurück.`;
+        ? `Note these keywords: '${idea}'. Based on them, build a single, extremely engaging, magical and child-friendly starting point (max 1-2 sentences) for a children's book. The tone should be warm, inviting and creative. Return ONLY the finished proposal text, no other text around it. IMPORTANT: GENERATE THE TEXT IN ${language.toUpperCase()}.`
+        : `Generate a completely random, beautiful and creative starting point (1-2 sentences) for a children's book. Use themes like brave animals, vibrant nature, friendly robots, space adventures or magical worlds. Return ONLY the finished proposal text, no other text around it. IMPORTANT: GENERATE THE TEXT IN ${language.toUpperCase()}.`;
 
       const response = await ai.models.generateContent({
         model: MODEL_NAME,
@@ -412,8 +446,8 @@ export default function App() {
         setIdea(response.text.trim());
       }
     } catch (err) {
-      console.error("Fehler bei Inspiration:", err);
-      setError("Inspirations-Zauber fehlgeschlagen. Bitte versuche es später noch einmal!");
+      console.error("Error in inspiration:", err);
+      setError(t('create.inspiration_error'));
     } finally {
       setIsInspirationLoading(false);
     }
@@ -425,34 +459,36 @@ export default function App() {
     setError(null);
     try {
       // 0. LOCAL KEYWORD PRE-CHECK
-      const blockedKeywords = ['tod', 'blut', 'mord', 'töten', 'krieg', 'gewalt', 'sex', 'porno', 'droge', 'waffe', 'schießen', 'sterben', 'schlagen', 'hassen'];
+      const blockedKeywords = ['tod', 'blut', 'mord', 'töten', 'krieg', 'gewalt', 'sex', 'porno', 'droge', 'waffe', 'schießen', 'sterben', 'schlagen', 'hassen', 'death', 'blood', 'murder', 'kill', 'war', 'violence', 'porn', 'drug', 'weapon', 'shoot', 'die', 'hit', 'hate'];
       const ideaLower = idea.toLowerCase();
       const hasBlockedWord = blockedKeywords.some(word => ideaLower.includes(word));
       
       if (hasBlockedWord) {
-        setError("Ups! Das ist ein bisschen zu wild für ein friedliches Kinderbuch... Lass uns lieber ein schönes, positives Abenteuer erleben! 🌟");
+        setError(t('create.safety_error'));
         setIsLoading(false);
         return;
       }
 
       // 1. AI PRE-CHECK
-      const safetyPrompt = `Bewerte die folgende Eingabe strikt auf Kindersicherheit. Enthält sie sensible, gewalttätige, beängstigende, drogenbezogene, diskriminierende oder sexuelle Inhalte? Antworte NUR mit "UNSAFE", wenn sie ungeeignet ist, ansonsten mit "SAFE".\nEingabe: "${idea}"`;
+      const safetyPrompt = `Evaluate the following input strictly for child safety. Does it contain sensitive, violent, frightening, drug-related, discriminatory or sexual content? Reply ONLY with "UNSAFE" if it is inappropriate, otherwise with "SAFE". Language may vary.\nInput: "${idea}"`;
       const safetyRes = await ai.models.generateContent({
         model: MODEL_NAME,
         contents: safetyPrompt,
         config: {
-          systemInstruction: "Du bist ein strenger Jugendschutz-Filter für Kinder von 2 bis 8 Jahren."
+          systemInstruction: "You are a strict youth protection filter for children aged 2 to 8 years."
         }
       });
       if (safetyRes.text && safetyRes.text.trim().toUpperCase().includes('UNSAFE')) {
-        setError("Ups! Dieser Inhalt ist für ein friedliches Kinderbuch leider nicht geeignet. Lass uns lieber ein schönes, positives Abenteuer erleben! 🌟");
+        setError(t('create.safety_error'));
         setIsLoading(false);
         return;
       }
 
-      const prompt = `Erstelle basierend auf der Idee: "${idea}" ein Kinderbuch-Konzept. Die Antwort MUSS zwingend ein valides JSON-Objekt sein, das exakt dieser Struktur entspricht (kein Markdown drumherum, keine zusätzlichen Zeichen).
+      const prompt = `Create a children's book concept based on the idea: "${idea}". The response MUST be a valid JSON object matching this exact structure (no markdown, no extra characters). 
+      IMPORTANT: All fields (titles, storyline, character description) EXCEPT 'bild_prompt_en' MUST be in ${language.toUpperCase()}. 
+      'bild_prompt_en' MUST ALWAYS BE IN ENGLISH.
       
-      BEACHTE ZUM HAUPTCHARAKTER: Der 'bild_prompt_en' MUSS ein 'Complete Outfit Blueprint' sein. Definiere zwingend ALLE Kleidungsstücke (Kopfbedeckung, Oberteil, Unterteil, Schuhe, Accessoires) mit festen Farben und Stilen. Alles, was nicht explizit definiert ist, führt zu Fehlern.
+      ABOUT THE MAIN CHARACTER: The 'bild_prompt_en' MUST be a 'Complete Outfit Blueprint'. Define ALL pieces of clothing (headwear, top, bottom, shoes, accessories) with fixed colors and styles. Anything not explicitly defined leads to inconsistencies.
       
       {
         "titel_optionen": ["...", "...", "..."],
@@ -466,9 +502,10 @@ export default function App() {
         model: MODEL_NAME,
         contents: prompt,
         config: {
-          systemInstruction: "UNUMSTÖßLICHE REGEL: Es dürfen ausschließlich jugendfreie, positive und pädagogisch wertvolle Inhalte für Kinder zwischen 2 und 8 Jahren erzeugt werden."
+          systemInstruction: `IRREVERSIBLE RULE: Only youth-friendly, positive and educationally valuable content for children between 2 and 8 years of age may be generated. Targeted language: ${language.toUpperCase()}.`
         }
       });
+
       // We will track cost after saving to firestore
       const text = response.text || '';
       const cleanJson = text.replace(/```json\n?|\n?```/g, '').trim();
@@ -964,80 +1001,74 @@ export default function App() {
   const handleGenerateBook = async () => {
     if (!selectedSkriptForBook) return;
     setIsGeneratingBook(true);
-    setGenerationStep('Die Geschichte wird gewebt...');
+    setGenerationStep(t('create.writing_step'));
     setError(null);
     try {
       const count = (selectedSkriptForBook.erzeugteBuecherCount || 0);
       if (count >= 3) {
-          throw new Error("Limit von 3 Büchern pro Kurzskript erreicht.");
+          throw new Error(t('create.limit_reached'));
       }
       
       const { zielalter, stimmung, seitenAnzahl } = bookConfig;
-      let inhaltsdichte = "Mittel";
-      let bildanteil = "Mittel";
-      if (zielalter === "2-4 Jahre") {
-         inhaltsdichte = "Klein (Sehr einfache, kurze Sätze, ca. 1-2 Sätze pro Seite)";
-         bildanteil = "Groß (Bilder dominieren die Seite vollständig)";
-      } else if (zielalter === "4-6 Jahre") {
-         inhaltsdichte = "Mittel (Einfache Sätze, ca. 3-4 Sätze pro Seite)";
-         bildanteil = "Mittel (Bilder und Text sind ausgewogen)";
-      } else if (zielalter === "6-8 Jahre") {
-         inhaltsdichte = "Groß (Längere Sätze, somewhat komplexere Struktur, ca. 4-6 Sätze pro Seite)";
-         bildanteil = "Klein (Text hat mehr Gewicht, Bilder untermalen die Geschichte)";
+      let inhaltsdichte = "Medium";
+      if (language === 'de') {
+        if (zielalter === "2-4 Jahre") inhaltsdichte = "Klein (Sehr einfache, kurze Sätze, ca. 1-2 Sätze pro Seite)";
+        else if (zielalter === "4-6 Jahre") inhaltsdichte = "Mittel (Einfache Sätze, ca. 3-4 Sätze pro Seite)";
+        else if (zielalter === "6-8 Jahre") inhaltsdichte = "Groß (Längere Sätze, somewhat komplexere Struktur, ca. 4-6 Sätze pro Seite)";
+      } else {
+        if (zielalter === "2-4 Jahre") inhaltsdichte = "Low (Very simple, short sentences, approx. 1-2 sentences per page)";
+        else if (zielalter === "4-6 Jahre") inhaltsdichte = "Medium (Simple sentences, approx. 3-4 sentences per page)";
+        else if (zielalter === "6-8 Jahre") inhaltsdichte = "High (Longer sentences, somewhat more complex structure, approx. 4-6 sentences per page)";
       }
 
       const promptStr = `
-Du bist ein professioneller Kinderbuchautor. Mache aus dem folgenden Kurzskript ein vollständiges Buch, formatiert als JSON.
-Die Parameter:
-Zielalter: ${zielalter}
-Stimmung: ${stimmung}
-Seiten: ${seitenAnzahl}
-Inhaltsdichte: ${inhaltsdichte}
-Bildanteil: ${bildanteil}
+You are a professional children's book author. Turn the following short script into a complete book, formatted as JSON.
+TARGET LANGUAGE: ${language.toUpperCase()}
 
-Charakter: ${JSON.stringify(selectedSkriptForBook.hauptcharakter)}
+The parameters:
+Target Age: ${zielalter}
+Mood: ${stimmung}
+Pages: ${seitenAnzahl}
+Content Density: ${inhaltsdichte}
+
+Character: ${JSON.stringify(selectedSkriptForBook.hauptcharakter)}
 Storyline: ${JSON.stringify(selectedSkriptForBook.storyline)}
 
-LAYOUT-REGELN:
-- Für "2-4 Jahre" und "4-6 Jahre": Trenne Bild und Text strikt auf separate Seiten (layoutType "text-only" oder "image-only").
-  Das Buch MUSS abwechselnd aus Text- und Bildseiten bestehen (Seite 1: Text, Seite 2: Bild, Seite 3: Text...).
-  Bei Text-Seiten: Erhöhe die Erzähltiefe (3-5 Sätze für 2-4J, 5-8 Sätze für 4-6J). Das Feld 'imagePrompt' bleibt leer ("").
-  Bei Bild-Seiten: Das Feld 'text' bleibt leer (""). Erzeuge einen hochqualitativen 'imagePrompt'.
-- Für "6-8 Jahre": Nutze layoutType "stacked". Hier sind Bild und Text auf JEDER Seite (Bild oben, Text unten).
+LAYOUT RULES:
+- For age groups "2-4 Jahre" and "4-6 Jahre": Strictly separate image and text on different pages (layoutType "text-only" or "image-only").
+  The book MUST alternate between text and image pages (Page 1: Text, Page 2: Image, Page 3: Text...).
+  For text pages: Increase narrative depth. The 'imagePrompt' field remains empty ("").
+  For image pages: The 'text' field remains empty (""). Generate a high-quality 'imagePrompt'.
+- For age group "6-8 Jahre": Use layoutType "stacked". Here, image AND text are on EVERY page (image top, text bottom).
 
-VISUELLE KONSISTENZ: Analysiere für jede Bild-Anforderung separat, ob der Hauptcharakter vorkommen MUSS.
-- Wenn JA: Injiziere seine Beschreibung ("${selectedSkriptForBook.hauptcharakter?.aussehen_de}") prominent in den englischen 'imagePrompt'.
-- HÄNGE AN JEDEN imagePrompt DIESEN ANTI-TEXT-RIEGEL AN: ", absolutely no text, no letters, no words, no typography, no signatures, clean character digital art style, perfect illustration"
+VISUAL CONSISTENCY:
+- Analyze for each image request separately whether the main character MUST appear.
+- ALWAYS GENERATE 'imagePrompt' IN ENGLISH. 
+- APPEND THIS ANTI-TEXT BAR TO EVERY imagePrompt: ", absolutely no text, no letters, no words, no typography, no signatures, clean character digital art style, perfect illustration"
 
-Dein Output MUSS exakt dieses JSON-Format haben:
+Your output MUST have exactly this JSON format:
 {
-  "titel": "Kreativer Titel des Buchs",
+  "titel": "Creative book title in ${language.toUpperCase()}",
   "seiten": [
     {
       "pageNumber": 1,
       "layoutType": "text-only", 
-      "text": "Der Text für diese Seite...",
+      "text": "Text for this page in ${language.toUpperCase()}...",
       "imagePrompt": ""
-    },
-    {
-      "pageNumber": 2,
-      "layoutType": "image-only",
-      "text": "",
-      "imagePrompt": "Der Bild-Prompt..."
     }
-    // ... insgesamt genau ${seitenAnzahl} Seiten
+    // ... exactly ${seitenAnzahl} pages
   ]
 }
 `;
 
       const response = await ai.models.generateContent({
-        model: MODEL_NAME, // Flash model for Stufe 2
+        model: MODEL_NAME,
         contents: {
           parts: [{ text: promptStr }],
         },
         config: {
           responseMimeType: "application/json",
-          systemInstruction: "UNUMSTÖßLICHE REGEL: Es dürfen ausschließlich jugendfreie, positive und pädagogisch wertvolle Inhalte für Kinder zwischen 2 und 8 Jahren erzeugt werden."
+          systemInstruction: `IRREVERSIBLE RULE: Only youth-friendly, positive and educationally valuable content for children between 2 and 8 years of age may be generated. Language: ${language.toUpperCase()}.`
         }
       });
       
@@ -1053,17 +1084,17 @@ Dein Output MUSS exakt dieses JSON-Format haben:
       const cleanJson = txt.replace(/```json\n?|\n?```/g, '').trim();
 
       // --- LEKTORAT (Gemini Pro) ---
-      setGenerationStep('Waschbär Paul gibt dem Buch den magischen Feinschliff... ✨');
+      setGenerationStep(t('create.polishing_step'));
       
-      const lektoratPromptStr = `Hier ist das Rohentwurf-Buch-JSON:\n\n${cleanJson}\n\nLiefere bitte strikt ein valides JSON-Objekt im exakt selben Format zurück!`;
+      const lektoratPromptStr = `Here is the raw draft book JSON:\n\n${cleanJson}\n\nReturn strictly a valid JSON object in the exact same format! Ensure the language is ${language.toUpperCase()}.`;
       const lektoratRes = await ai.models.generateContent({
-        model: 'gemini-3.1-pro-preview', // Pro model for Lektorat
+        model: 'gemini-1.5-pro-preview-0409', // Updated to 1.5 Pro
         contents: {
           parts: [{ text: lektoratPromptStr }]
         },
         config: {
           responseMimeType: "application/json",
-          systemInstruction: `Du bist ein professioneller Kinderbuch-Lektor. Deine Aufgabe ist es, das vorliegende Buch-JSON stilistisch, grammatikalisch und pädagogisch aufzupolieren. Optimiere den Text flüssig für die Zielgruppe ${zielalter}, korrigiere Satzstrukturen und mache die Wortwahl noch zauberhafter. Verändere dabei niemals die JSON-Struktur, die Seitenzahl oder die Felder (insbesondere 'pageNumber', 'layoutType', 'imagePrompt'). Gib ausschließlich das korrigierte JSON zurück.`
+          systemInstruction: `You are a professional children's book editor. Your task is to stylistically, grammatically and educationally polish the existing book JSON in ${language.toUpperCase()}. Optimize the text smoothly for the target group ${zielalter}, correct sentence structures and make the choice of words even more magical. Never change the JSON structure, the number of pages or the fields (especially 'pageNumber', 'layoutType', 'imagePrompt'). RETURN EXCLUSIVELY THE CORRECTED JSON.`
         }
       });
 
@@ -1190,9 +1221,29 @@ Dein Output MUSS exakt dieses JSON-Format haben:
   return (
     <div className="min-h-screen bg-[#FFFDF2] p-4 sm:p-6 font-sans text-slate-800 w-full max-w-full overflow-x-hidden relative">
       <header className="mb-6 sm:mb-12 flex flex-col items-center justify-center mt-2 sm:mt-4 relative z-40 bg-[#FFFDF2] gap-4">
-        <h1 className="text-3xl sm:text-4xl md:text-5xl font-magic tracking-normal text-orange-600 drop-shadow-[0_2px_2px_rgba(249,115,22,0.2)] text-center">
-          Fably – die Magie ist Dein
-        </h1>
+        <div className="flex flex-col md:flex-row items-center gap-4">
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-magic tracking-normal text-orange-600 drop-shadow-[0_2px_2px_rgba(249,115,22,0.2)] text-center">
+            {t('common.slogan')}
+          </h1>
+          
+          {/* Language Switcher in Header */}
+          <div className="flex gap-1 p-1 bg-white rounded-full shadow-sm border border-orange-50">
+            <button 
+              onClick={() => setLanguage('de')} 
+              className={`w-8 h-8 flex items-center justify-center rounded-full transition-all text-xs ${language === 'de' ? 'bg-orange-100 shadow-inner' : 'grayscale opacity-50 hover:grayscale-0 hover:opacity-100'}`}
+              title="Deutsch"
+            >
+              🇩🇪
+            </button>
+            <button 
+              onClick={() => setLanguage('en')} 
+              className={`w-8 h-8 flex items-center justify-center rounded-full transition-all text-xs ${language === 'en' ? 'bg-orange-100 shadow-inner' : 'grayscale opacity-50 hover:grayscale-0 hover:opacity-100'}`}
+              title="English"
+            >
+              EN
+            </button>
+          </div>
+        </div>
         
         {/* Navigation Wrapper */}
         <div className="flex items-center gap-4">
@@ -1201,7 +1252,7 @@ Dein Output MUSS exakt dieses JSON-Format haben:
             <button 
               onClick={() => setIsBackupManagerOpen(true)} 
               className="rounded-full bg-white border border-orange-100 flex items-center justify-center w-10 h-10 text-xl shadow-sm hover:bg-orange-50 transition-all cursor-pointer" 
-              title="Backup-Manager"
+              title={t('dashboard.backup_manager')}
             >
               💾
             </button>
@@ -1209,7 +1260,7 @@ Dein Output MUSS exakt dieses JSON-Format haben:
               onClick={() => { signOut(auth); setIsDevMode(false); }} 
               className="rounded-full bg-slate-900 px-6 py-2 text-sm font-bold text-white shadow-md hover:bg-slate-800 transition-all cursor-pointer whitespace-nowrap"
             >
-              Ausloggen
+              {t('common.logout')}
             </button>
           </div>
 
@@ -1218,7 +1269,7 @@ Dein Output MUSS exakt dieses JSON-Format haben:
             onClick={() => setIsMobileMenuOpen(true)} 
             className="md:hidden flex items-center gap-2 px-4 py-2 bg-white rounded-full shadow-sm text-sm font-bold cursor-pointer text-slate-700 border border-slate-100 hover:bg-slate-50 transition-all"
           >
-            <span>Menü</span>
+            <span>{t('common.menu')}</span>
             <span className="text-lg">☰</span>
           </button>
         </div>
@@ -1226,10 +1277,10 @@ Dein Output MUSS exakt dieses JSON-Format haben:
       
       <main className="mx-auto max-w-3xl">
         <div className="hidden md:flex gap-2 sm:gap-4 border-b border-orange-200 mb-8 overflow-x-auto pb-2 scrollbar-hide">
-          <button onClick={() => setActiveTab('dashboard')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'dashboard' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>Start</button>
-          <button onClick={() => setActiveTab('create')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'create' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>Neue Geschichte</button>
-          <button onClick={() => setActiveTab('library')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'library' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>Meine Kurzskripte ({allBooks.length})</button>
-          <button onClick={() => setActiveTab('books')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'books' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>Bücher ({allFinishedBooks.length})</button>
+          <button onClick={() => setActiveTab('dashboard')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'dashboard' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>{t('dashboard.new_story_nav')}</button>
+          <button onClick={() => setActiveTab('create')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'create' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>{t('dashboard.new_story')}</button>
+          <button onClick={() => setActiveTab('library')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'library' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>{t('library.title')} ({allBooks.length})</button>
+          <button onClick={() => setActiveTab('books')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'books' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>{t('book.title')} ({allFinishedBooks.length})</button>
         </div>
 
         {activeTab === 'dashboard' ? <Dashboard /> : activeTab === 'create' ? (
@@ -1239,7 +1290,7 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                 id="ideaTextarea"
                 className="w-full rounded-3xl bg-slate-50 border-2 border-slate-100 p-6 text-lg focus:outline-none focus:border-orange-200 transition-all"
                 rows={4}
-                placeholder="Beschreibe deine Buchidee..."
+                placeholder={t('create.placeholder')}
                 value={idea}
                 onChange={(e) => setIdea(e.target.value)}
               />
@@ -1248,7 +1299,7 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                 disabled={isInspirationLoading}
                 className="mt-2 text-sm font-bold text-orange-600 hover:text-orange-700 flex items-center justify-center gap-2 w-full py-2"
               >
-                {isInspirationLoading ? "Zaubere... ✨" : "✨ Lass dich verzaubern!"}
+                {isInspirationLoading ? t('create.inspiration_loading') : t('create.inspiration_btn')}
               </button>
               <button
                 id="generateButton"
@@ -1256,7 +1307,7 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                 disabled={isLoading || !idea}
                 className="mt-6 w-full rounded-3xl bg-orange-500 py-5 text-xl font-bold text-white transition-all shadow-[0_8px_0_rgb(194,65,12)] active:translate-y-1 active:shadow-none disabled:bg-slate-300 disabled:shadow-none"
               >
-                {isLoading ? "Zaubere..." : "✨ Magie wirken lassen"}
+                {isLoading ? t('create.generate_loading') : t('create.generate_btn')}
               </button>
             </div>
             {error && (
@@ -1386,16 +1437,16 @@ Dein Output MUSS exakt dieses JSON-Format haben:
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {allBooks.length > 0 && selectedBooks.size > 0 && (
               <button onClick={handleDeleteSelected} className="md:col-span-2 mb-4 bg-red-500 text-white font-bold py-3 px-6 rounded-full hover:bg-red-600 active:bg-red-700 cursor-pointer transition-colors shadow-sm cursor-pointer">
-                {selectedBooks.size} Geschichten löschen
+                {selectedBooks.size} {t('library.delete_count')}
               </button>
             )}
             {allBooks.map(book => (
               <div key={book.id} className="relative rounded-[30px] bg-white p-6 shadow-sm border border-slate-100 flex flex-col gap-4">
                 <input type="checkbox" onChange={() => handleToggleSelectBook(book.id)} checked={selectedBooks.has(book.id)} className="absolute top-4 left-4" />
                 <img src={book.hauptcharakter.avatar_url || ''} alt="" onClick={() => setEditingBook(book)} className="w-full h-40 object-cover rounded-2xl bg-slate-100 cursor-pointer" />
-                <h3 className="font-bold text-lg">{book.ausgewaehlter_titel || "Ohne Titel"}</h3>
+                <h3 className="font-bold text-lg">{book.ausgewaehlter_titel || t('library.untitled')}</h3>
                 <div className="flex justify-between items-center text-sm font-bold text-slate-500">
-                  <span>{book.created_at ? new Date(book.created_at.seconds * 1000).toLocaleDateString() : 'Unbekannt'}</span>
+                  <span>{book.created_at ? new Date(book.created_at.seconds * 1000).toLocaleDateString() : t('library.unknown_date')}</span>
                   {currentUser?.email === ADMIN_EMAIL && book.cost_metrics && <span>💰 ${book.cost_metrics.total_cost_usd.toFixed(2)}</span>}
                 </div>
                 <div className="flex gap-2">
@@ -1403,11 +1454,11 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                     onClick={() => setSelectedSkriptForBook(book)} 
                     disabled={(book.erzeugteBuecherCount || 0) >= 3}
                     className="flex-[2] bg-indigo-500 text-white py-2 rounded-full font-bold hover:bg-indigo-600 transition-colors shadow-sm cursor-pointer border border-indigo-400 disabled:opacity-50 disabled:cursor-not-allowed">
-                    {(book.erzeugteBuecherCount || 0) >= 3 ? "Limit erreicht (3/3)" : "📖 Buch erzeugen"}
+                    {(book.erzeugteBuecherCount || 0) >= 3 ? t('library.limit_reached') : t('library.create_book')}
                   </button>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => setEditingBook(book)} className="flex-1 bg-slate-100 text-slate-700 py-2 rounded-full font-bold hover:bg-slate-200 cursor-pointer transition-colors">Bearbeiten</button>
+                  <button onClick={() => setEditingBook(book)} className="flex-1 bg-slate-100 text-slate-700 py-2 rounded-full font-bold hover:bg-slate-200 cursor-pointer transition-colors">{t('library.edit')}</button>
                   <button onClick={(e) => { e.stopPropagation(); handleDeleteBook(book.id); }} className="bg-red-50 text-red-500 py-2 px-4 rounded-full font-bold relative z-20 cursor-pointer hover:bg-red-100 transition-colors">🗑️</button>
                 </div>
               </div>
@@ -1423,13 +1474,13 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                   onChange={(e) => setShowOnlyFavorites(e.target.checked)}
                   className="w-5 h-5 rounded text-indigo-500 focus:ring-indigo-500 border-slate-300"
                 />
-                ❤️ Nur Favoriten anzeigen
+                {t('book.show_favorites')}
               </label>
               {activeLabelFilter && (() => {
                 const activeCfg = customLabels.find(l => l.id === activeLabelFilter);
                 return (
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-slate-500 font-medium">Filter:</span>
+                    <span className="text-sm text-slate-500 font-medium">{t('book.filter')}</span>
                     <span className={`text-sm font-bold px-3 py-1 rounded-full flex items-center gap-2 shadow-sm ${activeCfg?.colorClass || 'bg-slate-100 text-slate-800'}`}>
                       {activeCfg?.name || activeLabelFilter}
                       <button 
@@ -1446,13 +1497,13 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                 onClick={() => setIsEditingLabels(true)}
                 className="text-sm font-medium text-slate-500 hover:text-indigo-600 bg-slate-50 hover:bg-indigo-50 px-3 py-1.5 rounded-full transition-colors flex items-center gap-2"
               >
-                🏷️ Labels anpassen
+                {t('book.adjust_labels')}
               </button>
             </div>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {filteredFinishedBooks.length === 0 && (
-                <p className="text-slate-500 col-span-2 text-center py-12">Noch keine {showOnlyFavorites ? 'favorisierten ' : ''}Bücher vorhanden.</p>
+                <p className="text-slate-500 col-span-2 text-center py-12">{showOnlyFavorites ? t('book.no_favorites_found') : t('book.no_books_found')}</p>
               )}
               {filteredFinishedBooks.map(book => (
                 <div key={book.id} className="relative rounded-[30px] bg-white p-6 shadow-sm border border-slate-100 flex flex-col gap-4 cursor-pointer hover:shadow-md transition-shadow" onClick={() => setReadingBook(book)}>
@@ -1472,9 +1523,9 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                   <img src={book.coverImage || ''} alt="Cover" className="w-full h-48 object-cover rounded-2xl bg-amber-50" />
                   <h3 className="font-bold text-xl text-slate-800">{book.titel}</h3>
                   <div className="flex flex-wrap gap-2 items-center">
-                    <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-2 py-1 rounded-md">{book.zielalter}</span>
-                    <span className="bg-pink-100 text-pink-800 text-xs font-bold px-2 py-1 rounded-md">{book.stimmung}</span>
-                    <span className="bg-slate-100 text-slate-600 text-xs font-bold px-2 py-1 rounded-md">{book.seitenAnzahl} Seiten</span>
+                    <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-2 py-1 rounded-md">{getTranslatedLabel('zielalter', book.zielalter)}</span>
+                    <span className="bg-pink-100 text-pink-800 text-xs font-bold px-2 py-1 rounded-md">{getTranslatedLabel('stimmung', book.stimmung)}</span>
+                    <span className="bg-slate-100 text-slate-600 text-xs font-bold px-2 py-1 rounded-md">{book.seitenAnzahl} {t('book.pages_suffix')}</span>
                     {currentUser?.email === ADMIN_EMAIL && book.kosten_protokoll && (
                       <div className="relative group ml-auto">
                         <div className="text-xs bg-emerald-100 text-emerald-800 font-bold px-2 py-1 rounded-md cursor-help">
@@ -1548,7 +1599,7 @@ Dein Output MUSS exakt dieses JSON-Format haben:
               <div className="w-3 h-3 bg-white rounded-full animate-bounce delay-150"></div>
               <div className="w-3 h-3 bg-white rounded-full animate-bounce delay-300"></div>
             </div>
-            <p className="mt-8 text-indigo-200 text-sm italic">"Geduld ist die Zauberzutat für gute Geschichten..."</p>
+            <p className="mt-8 text-indigo-200 text-sm italic">"{t('create.patience_hint')}"</p>
         </div>
       )}
 
@@ -1556,7 +1607,7 @@ Dein Output MUSS exakt dieses JSON-Format haben:
       {selectedSkriptForBook && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
           <div className="w-full max-w-lg rounded-[32px] bg-white p-8 shadow-2xl">
-            <h3 className="mb-6 text-2xl font-bold text-slate-800">Buch Konfigurator</h3>
+            <h3 className="mb-6 text-2xl font-bold text-slate-800">{t('create.config_title')}</h3>
             
             {error && (
               <div className="mb-6 rounded-2xl bg-red-100 p-4 text-red-800 border border-red-200 text-sm">
@@ -1566,7 +1617,7 @@ Dein Output MUSS exakt dieses JSON-Format haben:
 
             <div className="space-y-6">
               <div>
-                <label className="block text-sm font-bold text-slate-500 mb-3">Altersgruppe</label>
+                <label className="block text-sm font-bold text-slate-500 mb-3">{t('create.age_label')}</label>
                 <div className="flex gap-2">
                   {['2-4 Jahre', '4-6 Jahre', '6-8 Jahre'].map(alter => (
                     <button 
@@ -1574,14 +1625,14 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                       onClick={() => setBookConfig({ ...bookConfig, zielalter: alter })}
                       className={`flex-1 py-2 rounded-xl text-sm font-bold border-2 transition-colors cursor-pointer ${bookConfig.zielalter === alter ? 'border-orange-500 text-orange-600 bg-orange-50' : 'border-slate-100 text-slate-500 hover:border-slate-200'}`}
                     >
-                      {alter}
+                      {alter === '2-4 Jahre' ? t('create.age_2_4') : alter === '4-6 Jahre' ? t('create.age_4_6') : t('create.age_6_8')}
                     </button>
                   ))}
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-bold text-slate-500 mb-3">Stimmung</label>
+                <label className="block text-sm font-bold text-slate-500 mb-3">{t('create.mood_label')}</label>
                 <div className="flex flex-wrap gap-2">
                   {['Lustig', 'Träumerisch', 'Lehrreich', 'Spannend'].map(stimmung => (
                     <button 
@@ -1589,36 +1640,37 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                       onClick={() => setBookConfig({ ...bookConfig, stimmung })}
                       className={`px-4 py-2 rounded-xl text-sm font-bold border-2 transition-colors cursor-pointer ${bookConfig.stimmung === stimmung ? 'border-indigo-500 text-indigo-600 bg-indigo-50' : 'border-slate-100 text-slate-500 hover:border-slate-200'}`}
                     >
-                      {stimmung}
+                      {stimmung === 'Lustig' ? t('create.mood_funny') : stimmung === 'Träumerisch' ? t('create.mood_dreamy') : stimmung === 'Lehrreich' ? t('create.mood_educational') : t('create.mood_exciting')}
                     </button>
                   ))}
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-bold text-slate-500 mb-3">Seitenanzahl</label>
+                <label className="block text-sm font-bold text-slate-500 mb-3">{t('create.pages_label')}</label>
                 <select 
                   className="w-full rounded-xl border-2 border-slate-100 p-3 font-bold text-slate-700 outline-none focus:border-slate-300"
                   value={bookConfig.seitenAnzahl}
                   onChange={(e) => setBookConfig({ ...bookConfig, seitenAnzahl: parseInt(e.target.value) })}
                 >
                   {(bookConfig.zielalter === '2-4 Jahre' ? [8, 12] : bookConfig.zielalter === '4-6 Jahre' ? [12, 16, 24] : [16, 24]).map(num => (
-                    <option key={num} value={num}>{num} Seiten</option>
+                    <option key={num} value={num}>{num} {t('create.pages_suffix')}</option>
                   ))}
                 </select>
               </div>
 
               <div className="flex gap-4 mt-8 pt-6 border-t border-slate-100">
-                <button onClick={() => setSelectedSkriptForBook(null)} className="flex-1 rounded-full bg-slate-100 py-3 font-bold text-slate-700 hover:bg-slate-200 cursor-pointer">Abbrechen</button>
+                <button onClick={() => setSelectedSkriptForBook(null)} className="flex-1 rounded-full bg-slate-100 py-3 font-bold text-slate-700 hover:bg-slate-200 cursor-pointer">{t('common.cancel')}</button>
                 <button 
                   onClick={handleGenerateBook} 
                   disabled={isGeneratingBook}
                   className="flex-[2] rounded-full bg-indigo-500 py-3 font-bold text-white shadow-[0_4px_0_rgb(67,56,202)] hover:bg-indigo-600 active:translate-y-1 active:shadow-none cursor-pointer border border-indigo-400 disabled:opacity-50 disabled:translate-y-1 disabled:shadow-none"
                 >
-                  {isGeneratingBook ? "Wird geschrieben..." : "Buch ausarbeiten ✨"}
+                  {isGeneratingBook ? t('common.loading') : t('create.generate_book_btn')}
                 </button>
               </div>
             </div>
+
           </div>
         </div>
       )}
@@ -1627,11 +1679,11 @@ Dein Output MUSS exakt dieses JSON-Format haben:
       {showDeleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
           <div className="w-full max-w-sm rounded-[32px] bg-white p-8 shadow-2xl">
-            <h3 className="mb-4 text-2xl font-bold text-slate-800">Wirklich löschen?</h3>
-            <p className="mb-8 text-slate-600">Diese Aktion kann nicht rückgängig gemacht werden.</p>
+            <h3 className="mb-4 text-2xl font-bold text-slate-800">{t('common.confirm_delete_title')}</h3>
+            <p className="mb-8 text-slate-600">{t('common.confirm_delete_desc')}</p>
             <div className="flex gap-4">
-              <button onClick={() => setShowDeleteConfirm(null)} className="flex-1 rounded-full bg-slate-100 py-3 font-bold text-slate-700 hover:bg-slate-200 cursor-pointer">Abbrechen</button>
-              <button onClick={confirmDelete} className="flex-1 rounded-full bg-red-500 py-3 font-bold text-white shadow-[0_4px_0_rgb(153,27,27)] hover:bg-red-600 active:translate-y-1 active:shadow-none cursor-pointer">Löschen</button>
+              <button onClick={() => setShowDeleteConfirm(null)} className="flex-1 rounded-full bg-slate-100 py-3 font-bold text-slate-700 hover:bg-slate-200 cursor-pointer">{t('common.cancel')}</button>
+              <button onClick={confirmDelete} className="flex-1 rounded-full bg-red-500 py-3 font-bold text-white shadow-[0_4px_0_rgb(153,27,27)] hover:bg-red-600 active:translate-y-1 active:shadow-none cursor-pointer">{t('common.delete')}</button>
             </div>
           </div>
         </div>
@@ -1641,20 +1693,20 @@ Dein Output MUSS exakt dieses JSON-Format haben:
       {showDeleteFinishedConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
           <div className="w-full max-w-sm rounded-[32px] bg-white p-8 shadow-2xl">
-            <h3 className="mb-4 text-2xl font-bold text-slate-800">Wirklich löschen?</h3>
-            <p className="mb-8 text-slate-600">Möchtest du dieses fertige Buch wirklich dauerhaft löschen?</p>
+            <h3 className="mb-4 text-2xl font-bold text-slate-800">{t('common.confirm_delete_title')}</h3>
+            <p className="mb-8 text-slate-600">{t('common.confirm_delete_book_desc')}</p>
             <div className="flex gap-4">
               <button 
                 onClick={() => setShowDeleteFinishedConfirm(null)} 
                 className="flex-1 rounded-full bg-slate-100 py-3 font-bold text-slate-700 hover:bg-slate-200 cursor-pointer transition-colors"
               >
-                Abbrechen
+                {t('common.cancel')}
               </button>
               <button 
                 onClick={confirmDeleteFinishedBook} 
                 className="flex-[1] bg-red-500 text-white font-bold py-3 rounded-full hover:bg-red-600 transition shadow-[0_4px_0_rgb(153,27,27)] active:translate-y-1 active:shadow-none cursor-pointer"
               >
-                Löschen
+                {t('common.delete')}
               </button>
             </div>
           </div>
