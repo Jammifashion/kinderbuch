@@ -16,6 +16,11 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 const MODEL_NAME = 'gemini-3.1-flash-lite';
 const IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
 const ADMIN_EMAIL = 'gbr@jammifashion.de'; 
+const ALLOWED_EMAILS = [
+  'gbr@jammifashion.de',
+  'deine.email@gmail.com',
+  'freund@test.de'
+].map(e => e.toLowerCase());
 
 enum OperationType {
   CREATE = 'create',
@@ -143,6 +148,7 @@ export default function App() {
   const [generationStep, setGenerationStep] = useState<string>('');
   const [result, setResult] = useState<StoryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [whitelistError, setWhitelistError] = useState<string | null>(null);
   const [editingBook, setEditingBook] = useState<StoryResult | null>(null);
   const [selectedBooks, setSelectedBooks] = useState<Set<string>>(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | 'selected' | null>(null);
@@ -291,15 +297,28 @@ export default function App() {
   }, [bookConfig.zielalter]);
 
   useEffect(() => {
-    return onAuthStateChanged(auth, (authUser) => {
+    return onAuthStateChanged(auth, async (authUser) => {
+      if (authUser && authUser.email) {
+        const email = authUser.email.toLowerCase();
+        if (!ALLOWED_EMAILS.includes(email)) {
+          await signOut(auth);
+          setWhitelistError(t('common.whitelist_denied'));
+          setUser(null);
+          return;
+        }
+      }
+      
       setUser(authUser);
-      if (authUser?.email === ADMIN_EMAIL) {
+      setWhitelistError(null);
+      if (authUser) {
         fetchBooks();
         fetchFinishedBooks();
-        checkAndCreateAutoBackup();
+        if (authUser.email === ADMIN_EMAIL) {
+          checkAndCreateAutoBackup();
+        }
       }
     });
-  }, []);
+  }, [t]);
 
   const checkAndCreateAutoBackup = async () => {
     try {
@@ -391,6 +410,13 @@ export default function App() {
           <h1 className="text-6xl font-magic text-slate-900 mb-2 drop-shadow-sm">{t('common.app_name')}</h1>
           <p className="text-slate-500 font-medium tracking-wide border-t border-slate-100 pt-2 px-4 uppercase text-[10px]">{t('common.tagline')}</p>
         </div>
+
+        {whitelistError && (
+          <div className="mb-6 p-4 max-w-xs bg-white border border-orange-200 rounded-3xl text-orange-700 text-sm font-bold shadow-sm animate-in slide-in-from-top-4 duration-300">
+            {whitelistError}
+          </div>
+        )}
+
         <button onClick={handleLogin} className="w-full max-w-xs rounded-full bg-orange-500 px-8 py-5 text-xl font-bold text-white shadow-[0_8px_0_rgb(194,65,12)] hover:-translate-y-1 hover:shadow-[0_10px_0_rgb(194,65,12)] active:translate-y-1 active:shadow-none transition-all cursor-pointer">
           {t('common.login')}
         </button>
@@ -401,13 +427,13 @@ export default function App() {
     );
   }
 
-  if (currentUser.email !== ADMIN_EMAIL) {
+  if (currentUser.email && !ALLOWED_EMAILS.includes(currentUser.email.toLowerCase())) {
     return (
       <div className="flex h-screen items-center justify-center bg-[#FFFDF2] p-6 text-center">
         <div className="rounded-[40px] bg-white p-10 shadow-xl">
           <h1 className="text-3xl font-bold text-orange-600">{t('common.access_denied')}</h1>
-          <p className="mt-4 text-slate-500">{t('common.no_permission')}</p>
-          <button onClick={() => { signOut(auth); setIsDevMode(false); }} className="mt-6 rounded-full bg-slate-200 px-6 py-2">{t('common.logout')}</button>
+          <p className="mt-4 text-slate-500">{whitelistError || t('common.no_permission')}</p>
+          <button onClick={() => { signOut(auth); setIsDevMode(false); setWhitelistError(null); }} className="mt-6 rounded-full bg-slate-200 px-6 py-2">{t('common.logout')}</button>
         </div>
       </div>
     );
