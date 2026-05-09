@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { db, auth, storage } from './lib/firebase';
-import { collection, addDoc, serverTimestamp, getDocs, updateDoc, doc, deleteDoc } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, getDocs, updateDoc, doc, deleteDoc, getDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
 
@@ -55,6 +55,14 @@ interface BookPage {
   layoutType?: 'text-only' | 'image-only' | 'stacked';
 }
 
+interface KostenProtokoll {
+  entwurf: { tokens_in: number; tokens_out: number; cost: number };
+  ausarbeitung: { tokens_in: number; tokens_out: number; cost: number };
+  lektorat: { tokens_in: number; tokens_out: number; cost: number };
+  bilder: { anzahl: number; cost: number };
+  gesamt_kosten_usd: number;
+}
+
 interface AusgearbeitetesBuch {
   id: string;
   skriptId: string;
@@ -68,6 +76,7 @@ interface AusgearbeitetesBuch {
   isFavorite?: boolean;
   labelId?: string | null;
   createdByUser?: string;
+  kosten_protokoll?: KostenProtokoll;
 }
 
 export type CustomLabel = {
@@ -128,6 +137,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isImageLoading, setIsImageLoading] = useState(false);
   const [isGeneratingBook, setIsGeneratingBook] = useState(false);
+  const [isInspirationLoading, setIsInspirationLoading] = useState(false);
   const [generationStep, setGenerationStep] = useState<string>('');
   const [result, setResult] = useState<StoryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -189,25 +199,26 @@ export default function App() {
 
   const Dashboard = () => {
     const [liveSpend, setLiveSpend] = useState<number | null>(null);
+    const [isLoading, setIsLoading] = useState(false);
 
-    useEffect(() => {
-        async function fetchBilling() {
-            try {
-                const token = await auth.currentUser?.getIdToken();
-                if (!token) return;
-                const response = await fetch('/api/admin/live-billing', {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (response.ok) {
-                    const data = await response.json();
-                    setLiveSpend(data.currentSpend);
-                }
-            } catch (e) {
-                console.error("Billing fetch failed, falling back to local estimate.", e);
+    async function fetchBilling() {
+        setIsLoading(true);
+        try {
+            const token = await auth.currentUser?.getIdToken();
+            if (!token) return;
+            const response = await fetch('/api/admin/live-billing', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (response.ok) {
+                const data = await response.json();
+                setLiveSpend(data.currentSpend);
             }
+        } catch (e) {
+            console.error("Billing fetch failed, falling back to local estimate.", e);
+        } finally {
+            setIsLoading(false);
         }
-        fetchBilling();
-    }, []);
+    }
 
     return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -232,7 +243,14 @@ export default function App() {
 
       <div className="bg-white p-6 rounded-3xl border border-slate-100 flex items-center justify-between shadow-sm">
         <div className="text-sm font-bold text-slate-400 uppercase tracking-widest">Kostenübersicht {liveSpend !== null ? '(Live)' : '(Geschätzt)'}</div>
-        <div className="font-bold text-slate-800">{liveSpend !== null ? `$${liveSpend.toFixed(2)}` : `$${stats.total.toFixed(2)}`}</div>
+        <div className="flex items-center gap-4">
+            {liveSpend === null && (
+                <button onClick={fetchBilling} disabled={isLoading} className="text-xs text-orange-600 font-bold hover:underline cursor-pointer">
+                    {isLoading ? 'Lade...' : 'Kosten ermitteln'}
+                </button>
+            )}
+            <div className="font-bold text-slate-800">{liveSpend !== null ? `$${liveSpend.toFixed(2)}` : `$${stats.total.toFixed(2)}`}</div>
+        </div>
       </div>
     </div>
   );
@@ -373,6 +391,29 @@ export default function App() {
   }
 
   // --- Handlers ---
+  const handleGenerateInspiration = async () => {
+    setIsInspirationLoading(true);
+    try {
+      const prompt = idea.trim().length > 0
+        ? `Nimm diese Stichworte: '${idea}'. Baue daraus eine einzige, extrem fesselnde, magische und kindgerechte Ausgangslage (maximal 1-2 Sätze) für ein Kinderbuch. Der Ton soll warm, einladend und kreativ sein. Gib NUR den fertigen Vorschlagstext zurück, keinen anderen Text drumherum.`
+        : `Generiere eine völlig zufällige, wunderschöne und kreative Ausgangslage (1-2 Sätze) für ein Kinderbuch. Nutze Themen wie mutige Tiere, lebendige Natur, freundliche Roboter, Weltraumabenteuer oder magische Welten. Gib NUR den fertigen Vorschlagstext zurück.`;
+
+      const response = await ai.models.generateContent({
+        model: MODEL_NAME,
+        contents: { parts: [{ text: prompt }] },
+      });
+
+      if (response.text) {
+        setIdea(response.text.trim());
+      }
+    } catch (err) {
+      console.error("Fehler bei Inspiration:", err);
+      setError("Inspirations-Zauber fehlgeschlagen. Bitte versuche es später noch einmal!");
+    } finally {
+      setIsInspirationLoading(false);
+    }
+  };
+
   const handleGenerate = async () => {
     if (!idea.trim()) return;
     setIsLoading(true);
@@ -404,13 +445,16 @@ export default function App() {
         return;
       }
 
-      const prompt = `Erstelle basierend auf der Idee: "${idea}" ein Kinderbuch-Konzept. Die Antwort MUSS zwingend ein valides JSON-Objekt sein, das exakt dieser Struktur entspricht (kein Markdown drumherum, keine zusätzlichen Zeichen):
+      const prompt = `Erstelle basierend auf der Idee: "${idea}" ein Kinderbuch-Konzept. Die Antwort MUSS zwingend ein valides JSON-Objekt sein, das exakt dieser Struktur entspricht (kein Markdown drumherum, keine zusätzlichen Zeichen).
+      
+      BEACHTE ZUM HAUPTCHARAKTER: Der 'bild_prompt_en' MUSS ein 'Complete Outfit Blueprint' sein. Definiere zwingend ALLE Kleidungsstücke (Kopfbedeckung, Oberteil, Unterteil, Schuhe, Accessoires) mit festen Farben und Stilen. Alles, was nicht explizit definiert ist, führt zu Fehlern.
+      
       {
         "titel_optionen": ["...", "...", "..."],
         "zielgruppe": "...",
         "storyline": { "anfang": "...", "mitte": "...", "ende": "..." },
         "story_skelett": { "kapitel_1": "...", "kapitel_2": "...", "kapitel_3": "...", "kapitel_4": "...", "kapitel_5": "..." },
-        "hauptcharakter": { "name": "...", "gattung": "...", "persoenlichkeit": "...", "aussehen_de": "...", "bild_prompt_en": "..." }
+        "hauptcharakter": { "name": "...", "gattung": "...", "persoenlichkeit": "...", "aussehen_de": "...", "bild_prompt_en": "Example: 'A cute, small baby bear, wearing a bright yellow short-sleeve t-shirt under classic dark blue denim dungarees, a red baseball cap, and tiny white sneakers. Big friendly eyes, cartoon illustration style, vibrant Pixar colors, clean white background, 3d render style.'" }
       }`;
       
       const response = await ai.models.generateContent({
@@ -435,20 +479,21 @@ export default function App() {
           status: 'draft'
         });
         const bookId = docRef.id;
+        
+        const metrics = await updateBookCosts(bookId, {
+          promptTokens: response.usageMetadata?.promptTokenCount,
+          outputTokens: response.usageMetadata?.candidatesTokenCount
+        });
+
         setResult({ 
           ...storyData, 
           id: bookId,
-          cost_metrics: {
-            text_input_tokens: 0,
-            text_output_tokens: 0,
+          cost_metrics: metrics || {
+            text_input_tokens: response.usageMetadata?.promptTokenCount || 0,
+            text_output_tokens: response.usageMetadata?.candidatesTokenCount || 0,
             images_generated: 0,
             total_cost_usd: 0
           }
-        });
-        
-        await updateBookCosts(bookId, {
-          promptTokens: response.usageMetadata?.promptTokenCount,
-          outputTokens: response.usageMetadata?.candidatesTokenCount
         });
       } catch (e) {
         handleFirestoreError(e, OperationType.WRITE, 'buecher');
@@ -724,6 +769,53 @@ export default function App() {
     setShowDeleteFinishedConfirm(null);
   };
 
+  const generatePageImage = async (bookId: string, pageIndex: number, prompt: string) => {
+    setIsImageLoading(true);
+    try {
+      // 1. Paid API key check for AI Studio UI
+      if ((window as any).aistudio && typeof (window as any).aistudio.hasSelectedApiKey === 'function') {
+        const hasKey = await (window as any).aistudio.hasSelectedApiKey();
+        if (!hasKey) {
+          await (window as any).aistudio.openSelectKey();
+        }
+      }
+
+      // 2. Init AI
+      const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+      if (!apiKey) throw new Error("Gemini API Key fehlt!");
+      const aiPaid = new GoogleGenAI({ apiKey });
+
+      const finalPrompt = prompt + ", absolutely no text, no letters, no words, no typography, no signatures, clean character digital art style, perfect illustration";
+
+      const response = await aiPaid.models.generateContent({
+        model: IMAGE_MODEL,
+        contents: { parts: [{ text: finalPrompt }] },
+        config: { imageConfig: { aspectRatio: "1:1" } }
+      });
+
+      let base64Image = '';
+      if (response && response.candidates && response.candidates[0].content.parts) {
+        for (const part of response.candidates[0].content.parts) {
+          if (part.inlineData) { base64Image = part.inlineData.data; break; }
+        }
+      }
+      if (!base64Image) throw new Error("Bild-Antwort der API war leer.");
+
+      // 5. Speicher in Firebase Storage
+      const storageRef = ref(storage, `buecher/${bookId}/page_${pageIndex}_${Date.now()}.png`);
+      const blob = await fetch(`data:image/png;base64,${base64Image}`).then(r => r.blob());
+      await uploadBytes(storageRef, blob);
+      const url = await getDownloadURL(storageRef);
+
+      return url;
+    } catch (err: any) {
+      console.error("Bildgenerierung Fehler:", err);
+      return null;
+    } finally {
+      setIsImageLoading(false);
+    }
+  };
+
   const generateCharacterImage = async (bookId: string, prompt: string, oldUrl?: string) => {
     setIsImageLoading(true);
     setError(null);
@@ -769,8 +861,8 @@ export default function App() {
           }
         });
       } catch (apiErr: any) {
-        console.error("[Frontend] Nano Banana 2 API Fehler:", apiErr);
-        throw new Error(`API Fehler (Quota, Filter oder Key?): ${apiErr.message}`);
+        console.error("[Frontend] API Fehler:", apiErr);
+        throw new Error(`API Fehler: ${apiErr.message}`);
       }
 
       let base64Image = '';
@@ -794,7 +886,6 @@ export default function App() {
           await deleteObject(oldRef);
         } catch (delErr: any) {
           console.error("[Frontend] Warnung: Konnte altes Bild nicht aus Firestore löschen:", delErr);
-          // Wir werfen keinen Fehler, damit der Prozess weitergeht!
         }
       }
 
@@ -858,8 +949,10 @@ export default function App() {
                    (newMetrics.images_generated * 0.01);
 
       await updateDoc(bookRef, { cost_metrics: newMetrics });
+      return newMetrics;
     } catch (e) {
       console.warn("Could not update cost", e);
+      return null;
     }
   };
 
@@ -933,7 +1026,7 @@ Dein Output MUSS exakt dieses JSON-Format haben:
 `;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.1-pro-preview',
+        model: MODEL_NAME, // Flash model for Stufe 2
         contents: {
           parts: [{ text: promptStr }],
         },
@@ -943,45 +1036,55 @@ Dein Output MUSS exakt dieses JSON-Format haben:
         }
       });
       
+      const ausarbeitungTokensIn = response.usageMetadata?.promptTokenCount || 0;
+      const ausarbeitungTokensOut = response.usageMetadata?.candidatesTokenCount || 0;
+
       await updateBookCosts(selectedSkriptForBook.id, {
-        promptTokens: response.usageMetadata?.promptTokenCount,
-        outputTokens: response.usageMetadata?.candidatesTokenCount
+        promptTokens: ausarbeitungTokensIn,
+        outputTokens: ausarbeitungTokensOut
       });
 
       let txt = response.text || "{}";
       const cleanJson = txt.replace(/```json\n?|\n?```/g, '').trim();
-      const parsed = JSON.parse(cleanJson);
-      
-      // --- EDITORIAL CHECK (Word Budget) ---
-      const wordLimit = zielalter === '2-4 Jahre' ? 20 : (zielalter === '4-6 Jahre' ? 35 : 40);
-      let pages = (parsed.seiten || []) as BookPage[];
-      
-      let needsCorrection = false;
-      for (const p of pages) {
-        if (p.text && p.text.split(/\s+/).filter(w => w.length > 0).length > wordLimit) {
-            needsCorrection = true;
-            break;
-        }
-      }
 
-      if (needsCorrection) {
-        setGenerationStep('Waschbär Paul feilt noch an den feinsten Sätzen... ✏️');
-        for (let i = 0; i < pages.length; i++) {
-          const words = pages[i].text.split(/\s+/).filter(w => w.length > 0);
-          if (words.length > wordLimit) {
-            const correctionPrompt = `Du bist ein professioneller Kinderbuch-Lektor. Kürze den folgenden Text für die Altersgruppe "${zielalter}" auf MAXIMAL ${wordLimit} Wörter. Behalte den emotionalen Kern und die Story-Kontinuität bei. Antworte NUR mit dem gekürzten Text, ohne Metatext oder Erklärungen.\n\nText: "${pages[i].text}"`;
-            
-            const correctionRes = await ai.models.generateContent({
-              model: MODEL_NAME,
-              contents: correctionPrompt
-            });
-            
-            if (correctionRes.text) {
-              pages[i].text = correctionRes.text.trim();
-            }
-          }
+      // --- LEKTORAT (Gemini Pro) ---
+      setGenerationStep('Waschbär Paul gibt dem Buch den magischen Feinschliff... ✨');
+      
+      const lektoratPromptStr = `Hier ist das Rohentwurf-Buch-JSON:\n\n${cleanJson}\n\nLiefere bitte strikt ein valides JSON-Objekt im exakt selben Format zurück!`;
+      const lektoratRes = await ai.models.generateContent({
+        model: 'gemini-3.1-pro-preview', // Pro model for Lektorat
+        contents: {
+          parts: [{ text: lektoratPromptStr }]
+        },
+        config: {
+          responseMimeType: "application/json",
+          systemInstruction: `Du bist ein professioneller Kinderbuch-Lektor. Deine Aufgabe ist es, das vorliegende Buch-JSON stilistisch, grammatikalisch und pädagogisch aufzupolieren. Optimiere den Text flüssig für die Zielgruppe ${zielalter}, korrigiere Satzstrukturen und mache die Wortwahl noch zauberhafter. Verändere dabei niemals die JSON-Struktur, die Seitenzahl oder die Felder (insbesondere 'pageNumber', 'layoutType', 'imagePrompt'). Gib ausschließlich das korrigierte JSON zurück.`
         }
-      }
+      });
+
+      const lektoratTokensIn = lektoratRes.usageMetadata?.promptTokenCount || 0;
+      const lektoratTokensOut = lektoratRes.usageMetadata?.candidatesTokenCount || 0;
+
+      let lektoratTxt = lektoratRes.text || cleanJson;
+      const finalJsonStr = lektoratTxt.replace(/```json\n?|\n?```/g, '').trim();
+      const parsed = JSON.parse(finalJsonStr);
+      let pages = (parsed.seiten || []) as BookPage[];
+
+      // --- KOSTENBERECHNUNG ---
+      const entwurfIn = selectedSkriptForBook.cost_metrics?.text_input_tokens || 0;
+      const entwurfOut = selectedSkriptForBook.cost_metrics?.text_output_tokens || 0;
+      const entwurfCost = (entwurfIn / 1_000_000 * 0.075) + (entwurfOut / 1_000_000 * 0.30);
+      
+      const ausarbeitungCost = (ausarbeitungTokensIn / 1_000_000 * 0.075) + (ausarbeitungTokensOut / 1_000_000 * 0.30);
+      const lektoratCost = (lektoratTokensIn / 1_000_000 * 1.25) + (lektoratTokensOut / 1_000_000 * 5.00);
+      
+      let kostenProtokoll: KostenProtokoll = {
+        entwurf: { tokens_in: entwurfIn, tokens_out: entwurfOut, cost: entwurfCost },
+        ausarbeitung: { tokens_in: ausarbeitungTokensIn, tokens_out: ausarbeitungTokensOut, cost: ausarbeitungCost },
+        lektorat: { tokens_in: lektoratTokensIn, tokens_out: lektoratTokensOut, cost: lektoratCost },
+        bilder: { anzahl: 0, cost: 0 },
+        gesamt_kosten_usd: entwurfCost + ausarbeitungCost + lektoratCost
+      };
 
       const newBookData = {
         skriptId: selectedSkriptForBook.id,
@@ -994,11 +1097,54 @@ Dein Output MUSS exakt dieses JSON-Format haben:
         isFavorite: false,
         labelId: null,
         createdByUser: currentUser?.email,
-        created_at: serverTimestamp()
+        created_at: serverTimestamp(),
+        kosten_protokoll: kostenProtokoll
       };
       
       const docRef = await addDoc(collection(db, 'ausgearbeitete_buecher'), newBookData);
       
+      // --- IMAGE GENERATION ---
+      const maxImages = seitenAnzahl <= 12 ? 6 : 8;
+      let generatedCount = 0;
+      let pagesWithImages = pages.filter(p => p.layoutType === 'image-only' || p.layoutType === 'stacked');
+      
+      // Budget clamp
+      for(let i = 0; i < pagesWithImages.length; i++) {
+          if (generatedCount >= maxImages) {
+              pagesWithImages[i].layoutType = 'text-only';
+              pagesWithImages[i].imagePrompt = '';
+              continue;
+          }
+          
+          setGenerationStep(`Generiere Bild ${generatedCount + 1} von ${Math.min(pagesWithImages.length, maxImages)}... 🎨`);
+          
+          const fullPrompt = `${selectedSkriptForBook.hauptcharakter.bild_prompt_en}, ${pagesWithImages[i].imagePrompt}`;
+          const url = await generatePageImage(docRef.id, pagesWithImages[i].pageNumber, fullPrompt);                
+          
+          if (url) {
+              pagesWithImages[i].imageUrl = url;
+              generatedCount++;
+              
+              kostenProtokoll.bilder.anzahl = generatedCount;
+              kostenProtokoll.bilder.cost = generatedCount * 0.03;
+              kostenProtokoll.gesamt_kosten_usd = entwurfCost + ausarbeitungCost + lektoratCost + kostenProtokoll.bilder.cost;
+
+              await updateBookCosts(selectedSkriptForBook.id, { imageGenerated: true });
+          } else {
+              // Bei Fehler zur Sicherheit als Nur-Text anzeigen, falls kein Bild generiert werden konnte
+              pagesWithImages[i].layoutType = 'text-only';
+          }
+          
+          // Firestore Update nach Änderungen an dieser Seite, damit alle Anpassungen persistiert werden
+          await updateDoc(doc(db, 'ausgearbeitete_buecher', docRef.id), { 
+              seiten: pages,
+              kosten_protokoll: kostenProtokoll
+          });
+      }
+
+      // Falls es durch den continue Block am Ende ungeupdatete Seiten gab, einmal final speichern:
+      await updateDoc(doc(db, 'ausgearbeitete_buecher', docRef.id), { seiten: pages, kosten_protokoll: kostenProtokoll });
+
       const newCount = count + 1;
       await updateDoc(doc(db, 'buecher', selectedSkriptForBook.id), { erzeugteBuecherCount: newCount });
 
@@ -1075,6 +1221,13 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                 value={idea}
                 onChange={(e) => setIdea(e.target.value)}
               />
+              <button
+                onClick={handleGenerateInspiration}
+                disabled={isInspirationLoading}
+                className="mt-2 text-sm font-bold text-orange-600 hover:text-orange-700 flex items-center justify-center gap-2 w-full py-2"
+              >
+                {isInspirationLoading ? "Zaubere... ✨" : "✨ Lass dich verzaubern!"}
+              </button>
               <button
                 id="generateButton"
                 onClick={handleGenerate}
@@ -1164,7 +1317,17 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                         ) : result.hauptcharakter.avatar_url ? (
                           <img src={result.hauptcharakter.avatar_url} alt="Held" className="w-full h-full object-cover" />
                         ) : (
-                          <button onClick={() => generateCharacterImage(result.id, result.hauptcharakter.bild_prompt_en)} className="text-xs text-center p-2">Charakterbild generieren</button>
+                          <button 
+                            onClick={async () => {
+                              const newAvatarUrl = await generateCharacterImage(result.id, result.hauptcharakter.bild_prompt_en);
+                              if (newAvatarUrl) {
+                                setResult({...result, hauptcharakter: {...result.hauptcharakter, avatar_url: newAvatarUrl}});
+                              }
+                            }} 
+                            className="text-xs text-center p-2 cursor-pointer hover:text-orange-500 font-bold"
+                          >
+                            Charakterbild generieren
+                          </button>
                         )}
                       </div>
                       
@@ -1177,7 +1340,7 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                             }
                           }}
                           disabled={isImageLoading}
-                          className="w-full max-w-48 rounded-full bg-white border border-slate-200 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors shadow-sm"
+                          className="w-full max-w-48 rounded-full bg-white border border-slate-200 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors shadow-sm cursor-pointer disabled:opacity-50"
                         >
                           {isImageLoading ? "🔄 Generiere..." : "🔄 Bild neu generieren"}
                         </button>
@@ -1187,7 +1350,10 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                 </section>
                 
                 <div className="flex justify-center mt-12 pb-8">
-                  <button onClick={() => {}} className="px-8 py-4 rounded-full bg-slate-900 text-white font-bold text-lg shadow-[0_4px_0_rgb(15,23,42)] hover:-translate-y-1 hover:shadow-[0_6px_0_rgb(15,23,42)] active:translate-y-1 active:shadow-none transition-all cursor-pointer">
+                  <button 
+                    onClick={() => setSelectedSkriptForBook(result)} 
+                    className="px-8 py-4 rounded-full bg-slate-900 text-white font-bold text-lg shadow-[0_4px_0_rgb(15,23,42)] hover:-translate-y-1 hover:shadow-[0_6px_0_rgb(15,23,42)] active:translate-y-1 active:shadow-none transition-all cursor-pointer"
+                  >
                     Nächster Schritt: Buch ausarbeiten ➡️
                   </button>
                 </div>
@@ -1204,7 +1370,7 @@ Dein Output MUSS exakt dieses JSON-Format haben:
             {allBooks.map(book => (
               <div key={book.id} className="relative rounded-[30px] bg-white p-6 shadow-sm border border-slate-100 flex flex-col gap-4">
                 <input type="checkbox" onChange={() => handleToggleSelectBook(book.id)} checked={selectedBooks.has(book.id)} className="absolute top-4 left-4" />
-                <img src={book.hauptcharakter.avatar_url || ''} alt="" className="w-full h-40 object-cover rounded-2xl bg-slate-100" />
+                <img src={book.hauptcharakter.avatar_url || ''} alt="" onClick={() => setEditingBook(book)} className="w-full h-40 object-cover rounded-2xl bg-slate-100 cursor-pointer" />
                 <h3 className="font-bold text-lg">{book.ausgewaehlter_titel || "Ohne Titel"}</h3>
                 <div className="flex justify-between items-center text-sm font-bold text-slate-500">
                   <span>{book.created_at ? new Date(book.created_at.seconds * 1000).toLocaleDateString() : 'Unbekannt'}</span>
@@ -1283,10 +1449,36 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                   </button>
                   <img src={book.coverImage || ''} alt="Cover" className="w-full h-48 object-cover rounded-2xl bg-amber-50" />
                   <h3 className="font-bold text-xl text-slate-800">{book.titel}</h3>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-2 items-center">
                     <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-2 py-1 rounded-md">{book.zielalter}</span>
                     <span className="bg-pink-100 text-pink-800 text-xs font-bold px-2 py-1 rounded-md">{book.stimmung}</span>
                     <span className="bg-slate-100 text-slate-600 text-xs font-bold px-2 py-1 rounded-md">{book.seitenAnzahl} Seiten</span>
+                    {currentUser?.email === ADMIN_EMAIL && book.kosten_protokoll && (
+                      <div className="relative group ml-auto">
+                        <div className="text-xs bg-emerald-100 text-emerald-800 font-bold px-2 py-1 rounded-md cursor-help">
+                          💰 ${(book.kosten_protokoll.gesamt_kosten_usd || 0).toFixed(4)}
+                        </div>
+                        <div className="absolute bottom-full right-0 mb-2 w-64 bg-slate-900 border border-slate-700 shadow-xl rounded-xl p-4 text-xs text-slate-300 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                          <div className="font-bold text-white mb-2 pb-2 border-b border-slate-700">Detailed Cost Protocol</div>
+                          <div className="flex justify-between mb-1">
+                            <span>1. Entwurf:</span>
+                            <span className="font-mono text-emerald-400">${(book.kosten_protokoll.entwurf?.cost || 0).toFixed(4)}</span>
+                          </div>
+                          <div className="flex justify-between mb-1">
+                            <span>2. Ausarbeitung:</span>
+                            <span className="font-mono text-emerald-400">${(book.kosten_protokoll.ausarbeitung?.cost || 0).toFixed(4)}</span>
+                          </div>
+                          <div className="flex justify-between mb-1">
+                            <span>2.5 Lektorat:</span>
+                            <span className="font-mono text-emerald-400">${(book.kosten_protokoll.lektorat?.cost || 0).toFixed(4)}</span>
+                          </div>
+                          <div className="flex justify-between pt-1 mt-1 border-t border-slate-700/50">
+                            <span>3. Bilder ({book.kosten_protokoll.bilder?.anzahl || 0}x):</span>
+                            <span className="font-mono text-emerald-400">${(book.kosten_protokoll.bilder?.cost || 0).toFixed(4)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 mt-2 pt-4 border-t border-slate-50">
                     <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Label:</span>
@@ -1652,10 +1844,12 @@ Dein Output MUSS exakt dieses JSON-Format haben:
                     style={{ transform: `translateX(${translatePercent}%)`, opacity: isActive ? 1 : 0.3 }}
                   >
                     <div className="flex-[6] bg-white rounded-t-[32px] overflow-hidden flex items-center justify-center relative shadow-md">
-                      {seite.imageUrl ? (
+                      {isGeneratingBook ? (
+                        <div className="bg-slate-100 w-full h-full flex items-center justify-center animate-pulse text-4xl">🎨</div>
+                      ) : seite.imageUrl ? (
                         <img src={seite.imageUrl} alt={`Seite ${idx + 1}`} className="w-full h-full object-cover" loading="lazy" />
                       ) : (
-                         <div className="bg-slate-100 w-full h-full flex flex-col items-center justify-center p-4 italic text-sm text-slate-400 text-center">"{seite.imagePrompt}"</div>
+                         <div className="bg-slate-50 w-full h-full flex items-center justify-center text-slate-300 text-4xl border-2 border-dashed border-slate-200">🖼️</div>
                       )}
                     </div>
                     <div className="flex-[4] overflow-y-auto bg-slate-800 rounded-b-[32px] p-6 shadow-2xl z-10 border-t-4 border-slate-900 leading-relaxed flex flex-col relative text-white">
