@@ -367,12 +367,17 @@ export default function App() {
 
   if (!currentUser) {
     return (
-      <div className="flex h-screen flex-col items-center justify-center bg-[#FFFDF2] gap-4">
-        <button onClick={handleLogin} className="rounded-3xl bg-orange-500 px-8 py-5 text-xl font-bold text-white shadow-[0_8px_0_rgb(194,65,12)]">
+      <div className="flex h-screen flex-col items-center justify-center bg-[#FFFDF2] p-4 text-center">
+        <div className="mb-8 flex flex-col items-center animate-in fade-in zoom-in duration-1000">
+          <div className="w-24 h-24 bg-white rounded-[32px] shadow-xl flex items-center justify-center text-5xl mb-6 border-4 border-orange-50">📖</div>
+          <h1 className="text-6xl font-magic text-slate-900 mb-2 drop-shadow-sm">Fably</h1>
+          <p className="text-slate-500 font-medium tracking-wide border-t border-slate-100 pt-2 px-4 uppercase text-[10px]">Dein magischer Buchgenerator</p>
+        </div>
+        <button onClick={handleLogin} className="w-full max-w-xs rounded-full bg-orange-500 px-8 py-5 text-xl font-bold text-white shadow-[0_8px_0_rgb(194,65,12)] hover:-translate-y-1 hover:shadow-[0_10px_0_rgb(194,65,12)] active:translate-y-1 active:shadow-none transition-all cursor-pointer">
           Mit Google anmelden
         </button>
-        <p className="text-xs text-stone-500 text-center max-w-sm mt-4">
-          Hinweis: Wenn das Login-Fenster nicht erscheint, öffne die Vorschau bitte in einem neuen Tab (oben rechts auf das Symbol klicken).
+        <p className="text-[10px] text-stone-400 text-center max-w-sm mt-8 leading-relaxed">
+          Hinweis: Falls das Login-Fenster nicht erscheint, öffne die Vorschau in einem neuen Tab (Symbol oben rechts).
         </p>
       </div>
     );
@@ -1184,22 +1189,39 @@ Dein Output MUSS exakt dieses JSON-Format haben:
 
   return (
     <div className="min-h-screen bg-[#FFFDF2] p-4 sm:p-6 font-sans text-slate-800 w-full max-w-full overflow-x-hidden relative">
-      <header className="mb-4 sm:mb-10 flex items-center justify-between mt-2 sm:mt-4 relative z-40 bg-[#FFFDF2]">
-        <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight text-orange-600">Kinderbuch Zauber</h1>
+      <header className="mb-6 sm:mb-12 flex flex-col items-center justify-center mt-2 sm:mt-4 relative z-40 bg-[#FFFDF2] gap-4">
+        <h1 className="text-3xl sm:text-4xl md:text-5xl font-magic tracking-normal text-orange-600 drop-shadow-[0_2px_2px_rgba(249,115,22,0.2)] text-center">
+          Fably – die Magie ist Dein
+        </h1>
         
-        {/* Desktop Buttons */}
-        <div className="hidden md:flex gap-4">
-          <button onClick={() => setIsBackupManagerOpen(true)} className="rounded-full bg-slate-100 flex items-center justify-center w-12 h-12 text-2xl font-bold text-slate-700 hover:bg-slate-200 transition-colors shadow-sm cursor-pointer" title="Backup-Manager">💾</button>
-          <button onClick={() => { signOut(auth); setIsDevMode(false); }} className="rounded-full bg-slate-800 px-6 py-3 font-bold text-white shadow-sm cursor-pointer whitespace-nowrap">Ausloggen</button>
-        </div>
+        {/* Navigation Wrapper */}
+        <div className="flex items-center gap-4">
+          {/* Desktop Buttons */}
+          <div className="hidden md:flex gap-3">
+            <button 
+              onClick={() => setIsBackupManagerOpen(true)} 
+              className="rounded-full bg-white border border-orange-100 flex items-center justify-center w-10 h-10 text-xl shadow-sm hover:bg-orange-50 transition-all cursor-pointer" 
+              title="Backup-Manager"
+            >
+              💾
+            </button>
+            <button 
+              onClick={() => { signOut(auth); setIsDevMode(false); }} 
+              className="rounded-full bg-slate-900 px-6 py-2 text-sm font-bold text-white shadow-md hover:bg-slate-800 transition-all cursor-pointer whitespace-nowrap"
+            >
+              Ausloggen
+            </button>
+          </div>
 
-        {/* Mobile Burger Icon */}
-        <button 
-          onClick={() => setIsMobileMenuOpen(true)} 
-          className="md:hidden flex items-center justify-center w-10 h-10 bg-white rounded-full shadow-sm text-lg cursor-pointer text-slate-700 border border-slate-100 hover:bg-slate-50 transition-colors"
-        >
-          ☰
-        </button>
+          {/* Mobile Burger Icon (now centered below title on mobile or side-by-side) */}
+          <button 
+            onClick={() => setIsMobileMenuOpen(true)} 
+            className="md:hidden flex items-center gap-2 px-4 py-2 bg-white rounded-full shadow-sm text-sm font-bold cursor-pointer text-slate-700 border border-slate-100 hover:bg-slate-50 transition-all"
+          >
+            <span>Menü</span>
+            <span className="text-lg">☰</span>
+          </button>
+        </div>
       </header>
       
       <main className="mx-auto max-w-3xl">
@@ -2024,7 +2046,7 @@ Dein Output MUSS exakt dieses JSON-Format haben:
           className={`absolute top-0 right-0 bottom-0 w-[280px] bg-white shadow-2xl transition-transform duration-300 ease-in-out transform flex flex-col ${isMobileMenuOpen ? 'translate-x-0' : 'translate-x-full'}`}
         >
           <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-orange-50/50">
-            <h2 className="font-bold text-orange-600 text-xl">Menü</h2>
+            <h2 className="font-magic text-orange-600 text-2xl tracking-normal">Fably</h2>
             <button onClick={() => setIsMobileMenuOpen(false)} className="text-slate-500 text-2xl hover:text-slate-800 transition px-2">×</button>
           </div>
           <div className="flex flex-col gap-2 p-4 flex-1 overflow-y-auto">

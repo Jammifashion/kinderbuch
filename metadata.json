@@ -1,6 +1,6 @@
 {
-  "name": "Kinderbuch Zauber",
-  "description": "Erstelle deine eigenen Kinderbuch-Abenteuer mit Hilfe von KI.",
+  "name": "Fably",
+  "description": "Fably - Dein magischer Kinderbuchgenerator. Erstelle deine eigenen Abenteuer mit Hilfe von KI.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }
