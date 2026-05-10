@@ -9,6 +9,8 @@ import { db, auth, storage } from './lib/firebase';
 import { useLanguage } from './LanguageContext';
 import { collection, addDoc, serverTimestamp, getDocs, updateDoc, doc, deleteDoc, getDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 import { GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
 
 // --- Initialization ---
@@ -82,6 +84,7 @@ interface AusgearbeitetesBuch {
   isFavorite?: boolean;
   labelId?: string | null;
   createdByUser?: string;
+  pdfUrl?: string;
   kosten_protokoll?: KostenProtokoll;
 }
 
@@ -204,6 +207,194 @@ export default function App() {
     });
     return { total, last30Days, totalInputTokens, totalOutputTokens };
   }, [allBooks]);
+
+  const generatePdfBlob = async (book: AusgearbeitetesBuch): Promise<Blob | null> => {
+    try {
+      const pageWidth = 210;
+      const pageHeight = 297;
+
+      const getBase64Image = async (url: string): Promise<string | null> => {
+        if (!url) return null;
+        return new Promise((resolve) => {
+          const img = new Image();
+          img.crossOrigin = 'Anonymous';
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0);
+              resolve(canvas.toDataURL('image/jpeg', 0.8));
+            } else {
+              resolve(null);
+            }
+          };
+          img.onerror = () => {
+            // fallback with proxy if direct fails
+            const img2 = new Image();
+            img2.crossOrigin = 'Anonymous';
+            img2.onload = () => {
+               const canvas = document.createElement('canvas');
+               canvas.width = img2.width;
+               canvas.height = img2.height;
+               const ctx = canvas.getContext('2d');
+               if (ctx) {
+                 ctx.drawImage(img2, 0, 0);
+                 resolve(canvas.toDataURL('image/jpeg', 0.8));
+               } else {
+                 resolve(null);
+               }
+            };
+            img2.onerror = () => {
+                console.warn("Could not load image", url);
+                resolve(null);
+            };
+            img2.src = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+          };
+          img.src = url;
+        });
+      };
+
+      // 1. Create a hidden container for the entire book that shares app styles
+      const container = document.createElement('div');
+      container.style.width = '794px';
+      container.style.position = 'absolute';
+      container.style.left = '-9999px';
+      container.style.top = '0px';
+      container.className = "bg-[#FFFDF2] text-slate-800 font-sans";
+      document.body.appendChild(container);
+
+      // Render cover
+      const coverDiv = document.createElement('div');
+      coverDiv.style.width = '794px';
+      coverDiv.style.height = '1123px';
+      coverDiv.className = "flex flex-col items-center justify-center p-16 box-border gap-12 relative bg-[#FFFDF2]";
+      
+      const coverImgB64 = await getBase64Image(book.coverImage || '');
+      
+      coverDiv.innerHTML = `
+          <h1 class="text-6xl font-magic text-slate-900 text-center leading-tight drop-shadow-sm">${book.titel}</h1>
+          ${coverImgB64 ? `<div class="w-96 h-96 rounded-full overflow-hidden border-8 border-white shadow-xl bg-slate-100"><img src="${coverImgB64}" class="w-full h-full object-cover"/></div>` : ''}
+          <div class="flex gap-4 mt-8">
+            <span class="bg-indigo-100 text-indigo-800 text-xl font-bold px-6 py-2 rounded-full shadow-sm">${book.zielalter}</span>
+            <span class="bg-pink-100 text-pink-800 text-xl font-bold px-6 py-2 rounded-full shadow-sm">${book.stimmung}</span>
+          </div>
+      `;
+      container.appendChild(coverDiv);
+
+      const pageDivs: HTMLElement[] = [];
+
+      for (let i = 0; i < book.seiten.length; i++) {
+          const page = book.seiten[i];
+          const pageDiv = document.createElement('div');
+          pageDiv.style.width = '794px';
+          pageDiv.style.height = '1123px';
+          pageDiv.className = "flex flex-col p-12 box-border relative bg-[#FFFDF2]";
+
+          const pageImgB64 = await getBase64Image(page.imageUrl || '');
+          
+          const age = book.zielalter || '4-6 Jahre';
+          const layoutType = page.layoutType || (age === '6-8 Jahre' ? 'stacked' : (i % 2 === 0 ? 'text-only' : 'image-only'));
+
+          // Replicate layout from Reader Modal!
+          const fontSizeClass = page.text.length < 150 ? 'text-5xl' : (page.text.length < 250 ? 'text-4xl' : 'text-2xl');
+
+          if (layoutType === 'image-only') {
+              pageDiv.innerHTML = `
+                <div class="flex-1 bg-slate-100 rounded-2xl overflow-hidden relative shadow-inner">
+                    ${pageImgB64 ? `<img src="${pageImgB64}" class="w-full h-full object-cover absolute inset-0" />` : ''}
+                </div>
+                <p class="absolute bottom-6 right-12 text-lg text-slate-400 font-bold">${i + 1} / ${book.seiten.length}</p>
+              `;
+          } else if (layoutType === 'text-only') {
+              pageDiv.innerHTML = `
+                <div class="flex-1 flex items-center justify-center p-16">
+                    <p class="font-serif text-center leading-[1.6] text-slate-800 ${fontSizeClass}">${page.text.replace(/\n/g, '<br/>')}</p>
+                </div>
+                <p class="absolute bottom-6 right-12 text-lg text-slate-400 font-bold">${i + 1} / ${book.seiten.length}</p>
+              `;
+          } else {
+              pageDiv.innerHTML = `
+                <div class="flex-1 flex flex-col gap-8 pb-12">
+                    <div class="w-full h-[500px] rounded-2xl overflow-hidden bg-slate-100 relative shadow-inner shrink-0">
+                      ${pageImgB64 ? `<img src="${pageImgB64}" class="w-full h-full object-cover absolute inset-0" />` : ''}
+                    </div>
+                    <div class="flex-1 flex items-center justify-center px-8">
+                      <p class="font-serif text-center leading-[1.6] text-slate-800 ${fontSizeClass}">${page.text.replace(/\n/g, '<br/>')}</p>
+                    </div>
+                </div>
+                <p class="absolute bottom-6 right-12 text-lg text-slate-400 font-bold">${i + 1} / ${book.seiten.length}</p>
+              `;
+          }
+
+          container.appendChild(pageDiv);
+          pageDivs.push(pageDiv);
+      }
+
+      // Allow DOM to settle and fonts to apply
+      await new Promise(r => setTimeout(r, 500));
+      
+      const pdfDoc = new jsPDF({
+          orientation: 'portrait',
+          unit: 'mm',
+          format: 'a4'
+      });
+
+      const coverCanvas = await html2canvas(coverDiv, { scale: 2, useCORS: true, backgroundColor: '#FFFDF2', logging: false });
+      pdfDoc.addImage(coverCanvas.toDataURL('image/jpeg', 0.9), 'JPEG', 0, 0, 210, 297);
+
+      for (let i = 0; i < pageDivs.length; i++) {
+          pdfDoc.addPage();
+          const pageCanvas = await html2canvas(pageDivs[i], { scale: 2, useCORS: true, backgroundColor: '#FFFDF2', logging: false });
+          pdfDoc.addImage(pageCanvas.toDataURL('image/jpeg', 0.9), 'JPEG', 0, 0, 210, 297);
+      }
+
+      document.body.removeChild(container);
+      return pdfDoc.output('blob');
+    } catch (err) {
+      console.error("Fehler beim Erzeugen des PDF Blobs:", err);
+      return null;
+    }
+  };
+
+  const handleDownloadPDF = async (book: AusgearbeitetesBuch) => {
+    setIsLoading(true);
+    try {
+      const blob = await generatePdfBlob(book);
+      if (!blob) throw new Error("Konnte PDF nicht erzeugen");
+      
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${book.titel.replace(/\s+/g, '_')}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Fehler beim PDF Export:", err);
+      alert("Fehler beim PDF Export: " + (err as Error).message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const generateAndUploadPdf = async (book: AusgearbeitetesBuch) => {
+    try {
+      console.log("Starte automatischen PDF Upload für:", book.titel);
+      const blob = await generatePdfBlob(book);
+      if (!blob) return;
+
+      const storageRef = ref(storage, `buecher_pdfs/${book.id}.pdf`);
+      await uploadBytes(storageRef, blob);
+      const url = await getDownloadURL(storageRef);
+      await updateDoc(doc(db, 'ausgearbeitete_buecher', book.id), { pdfUrl: url });
+      console.log("PDF erfolgreich in Storage hochgeladen:", url);
+    } catch (err) {
+      console.error("Upload des PDFs in Storage fehlgeschlagen:", err);
+    }
+  };
 
   const Dashboard = () => {
     const [liveSpend, setLiveSpend] = useState<number | null>(null);
@@ -1210,6 +1401,12 @@ Your output MUST have exactly this JSON format:
       const newCount = count + 1;
       await updateDoc(doc(db, 'buecher', selectedSkriptForBook.id), { erzeugteBuecherCount: newCount });
 
+      const finalizedBook = { id: docRef.id, ...newBookData, seiten: pages, kosten_protokoll: kostenProtokoll } as AusgearbeitetesBuch;
+      
+      if (currentUser?.email === ADMIN_EMAIL) {
+         generateAndUploadPdf(finalizedBook);
+      }
+
       setSelectedSkriptForBook(null);
       setActiveTab('books');
       fetchBooks();
@@ -1552,8 +1749,17 @@ Your output MUST have exactly this JSON format:
                     <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-2 py-1 rounded-md">{getTranslatedLabel('zielalter', book.zielalter)}</span>
                     <span className="bg-pink-100 text-pink-800 text-xs font-bold px-2 py-1 rounded-md">{getTranslatedLabel('stimmung', book.stimmung)}</span>
                     <span className="bg-slate-100 text-slate-600 text-xs font-bold px-2 py-1 rounded-md">{book.seitenAnzahl} {t('book.pages_suffix')}</span>
+                    {currentUser?.email === ADMIN_EMAIL && (
+                      <button onClick={(e) => { 
+                          e.stopPropagation(); 
+                          if (book.pdfUrl) window.open(book.pdfUrl, '_blank');
+                          else handleDownloadPDF(book); 
+                      }} className="ml-auto text-xs bg-red-100 text-red-800 font-bold px-3 py-1.5 rounded-md hover:bg-red-200 transition-colors cursor-pointer flex items-center gap-1">
+                        📄 <span className="hidden sm:inline">{book.pdfUrl ? 'PDF (Cloud)' : 'PDF Export'}</span>
+                      </button>
+                    )}
                     {currentUser?.email === ADMIN_EMAIL && book.kosten_protokoll && (
-                      <div className="relative group ml-auto">
+                      <div className="relative group ml-1">
                         <div className="text-xs bg-emerald-100 text-emerald-800 font-bold px-2 py-1 rounded-md cursor-help">
                           💰 ${(book.kosten_protokoll.gesamt_kosten_usd || 0).toFixed(4)}
                         </div>
@@ -1847,7 +2053,18 @@ Your output MUST have exactly this JSON format:
         <div className="fixed inset-0 z-[70] flex flex-col bg-slate-900 text-white">
           <div className="flex justify-between items-center p-4 bg-slate-800/80 backdrop-blur-md absolute top-0 w-full z-[80]">
             <h3 className="font-bold truncate px-4">{readingBook.titel}</h3>
-            <button onClick={() => { setReadingBook(null); setCurrentReadingPage(0); }} className="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-full cursor-pointer transition-colors shrink-0">Schließen</button>
+            <div className="flex items-center gap-2">
+              {currentUser?.email === ADMIN_EMAIL && (
+                <button onClick={(e) => { 
+                    e.stopPropagation(); 
+                    if (readingBook.pdfUrl) window.open(readingBook.pdfUrl, '_blank');
+                    else handleDownloadPDF(readingBook); 
+                }} className="bg-red-500 hover:bg-red-600 text-white font-bold px-4 py-2 rounded-full flex items-center gap-2 cursor-pointer transition-colors shrink-0">
+                  📄 <span className="hidden sm:inline">{readingBook.pdfUrl ? 'PDF (Cloud)' : 'PDF Download'}</span>
+                </button>
+              )}
+              <button onClick={() => { setReadingBook(null); setCurrentReadingPage(0); }} className="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-full cursor-pointer transition-colors shrink-0">Schließen</button>
+            </div>
           </div>
 
           <div className="flex-1 flex items-center justify-center relative overflow-hidden pt-16">
@@ -2018,6 +2235,35 @@ Your output MUST have exactly this JSON format:
                     />
                   </label>
                 </div>
+                {currentUser?.email === ADMIN_EMAIL && (
+                  <div className="flex flex-col sm:flex-row gap-4 mt-2">
+                    <button 
+                      onClick={async () => {
+                        setIsBackupLoading(true);
+                        let count = 0;
+                        try {
+                          for (const book of allFinishedBooks) {
+                            if (!book.pdfUrl) {
+                               console.log("Generiere PDF für:", book.titel);
+                               await generateAndUploadPdf(book);
+                               count++;
+                            }
+                          }
+                          alert(`Erfolgreich! ${count} verbleibende PDFs wurden hochgeladen.`);
+                          fetchFinishedBooks();
+                        } catch(e: any) {
+                          alert("Fehler: " + e.message);
+                        } finally {
+                          setIsBackupLoading(false);
+                        }
+                      }}
+                      disabled={isBackupLoading || allFinishedBooks.filter(b => !b.pdfUrl).length === 0}
+                      className="flex-1 bg-red-100 text-red-700 py-3 rounded-full font-bold shadow-sm hover:shadow-md transition-all sm:text-sm cursor-pointer disabled:opacity-50"
+                    >
+                      📄 Fehlende PDFs hochladen ({allFinishedBooks.filter(b => !b.pdfUrl).length})
+                    </button>
+                  </div>
+                )}
               </div>
               
               <div className="bg-slate-50 border border-slate-100 rounded-[24px] p-6 space-y-4">
