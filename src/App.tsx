@@ -13,8 +13,8 @@ import { GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User 
 
 // --- Initialization ---
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
-const MODEL_NAME = 'gemini-3.1-flash-lite';
-const IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
+const MODEL_NAME = 'gemini-2.5-flash';
+const IMAGE_MODEL = 'gemini-2.5-flash-image';
 const ADMIN_EMAIL = 'gbr@jammifashion.de'; 
 const ALLOWED_EMAILS = [
   'gbr@jammifashion.de',
@@ -1114,7 +1114,7 @@ Your output MUST have exactly this JSON format:
       
       const lektoratPromptStr = `Here is the raw draft book JSON:\n\n${cleanJson}\n\nReturn strictly a valid JSON object in the exact same format! Ensure the language is ${language.toUpperCase()}.`;
       const lektoratRes = await ai.models.generateContent({
-        model: 'gemini-1.5-pro-preview-0409', // Updated to 1.5 Pro
+        model: 'gemini-3.1-pro-preview', // Updated to latest Pro model
         contents: {
           parts: [{ text: lektoratPromptStr }]
         },
