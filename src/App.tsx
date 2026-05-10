@@ -215,45 +215,30 @@ export default function App() {
 
       const getBase64Image = async (url: string): Promise<string | null> => {
         if (!url) return null;
-        return new Promise((resolve) => {
-          const img = new Image();
-          img.crossOrigin = 'Anonymous';
-          img.onload = () => {
-            const canvas = document.createElement('canvas');
-            canvas.width = img.width;
-            canvas.height = img.height;
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-              ctx.drawImage(img, 0, 0);
-              resolve(canvas.toDataURL('image/jpeg', 0.8));
-            } else {
-              resolve(null);
-            }
-          };
-          img.onerror = () => {
-            // fallback with proxy if direct fails
-            const img2 = new Image();
-            img2.crossOrigin = 'Anonymous';
-            img2.onload = () => {
-               const canvas = document.createElement('canvas');
-               canvas.width = img2.width;
-               canvas.height = img2.height;
-               const ctx = canvas.getContext('2d');
-               if (ctx) {
-                 ctx.drawImage(img2, 0, 0);
-                 resolve(canvas.toDataURL('image/jpeg', 0.8));
-               } else {
-                 resolve(null);
-               }
-            };
-            img2.onerror = () => {
+        try {
+          const res = await fetch(url);
+          const blob = await res.blob();
+          return await new Promise((resolve) => {
+             const reader = new FileReader();
+             reader.onloadend = () => resolve(reader.result as string);
+             reader.readAsDataURL(blob);
+          });
+        } catch(e) {
+             console.warn("Direct fetch fail, using proxy", e);
+             const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+             try {
+                const res = await fetch(proxyUrl);
+                const blob = await res.blob();
+                return await new Promise((resolve) => {
+                   const reader = new FileReader();
+                   reader.onloadend = () => resolve(reader.result as string);
+                   reader.readAsDataURL(blob);
+                });
+             } catch(err) {
                 console.warn("Could not load image", url);
-                resolve(null);
-            };
-            img2.src = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-          };
-          img.src = url;
-        });
+                return null;
+             }
+        }
       };
 
       // 1. Create a hidden container for the entire book that shares app styles
@@ -262,23 +247,26 @@ export default function App() {
       container.style.position = 'absolute';
       container.style.left = '-9999px';
       container.style.top = '0px';
-      container.className = "bg-[#FFFDF2] text-slate-800 font-sans";
+      container.style.backgroundColor = '#FFFDF2';
+      container.style.color = '#1e293b';
+      container.className = "font-sans";
       document.body.appendChild(container);
 
       // Render cover
       const coverDiv = document.createElement('div');
       coverDiv.style.width = '794px';
       coverDiv.style.height = '1123px';
-      coverDiv.className = "flex flex-col items-center justify-center p-16 box-border gap-12 relative bg-[#FFFDF2]";
+      coverDiv.style.backgroundColor = '#FFFDF2';
+      coverDiv.className = "flex flex-col items-center justify-center p-16 box-border gap-12 relative";
       
       const coverImgB64 = await getBase64Image(book.coverImage || '');
       
       coverDiv.innerHTML = `
-          <h1 class="text-6xl font-magic text-slate-900 text-center leading-tight drop-shadow-sm">${book.titel}</h1>
-          ${coverImgB64 ? `<div class="w-96 h-96 rounded-full overflow-hidden border-8 border-white shadow-xl bg-slate-100"><img src="${coverImgB64}" class="w-full h-full object-cover"/></div>` : ''}
+          <h1 class="text-6xl font-magic text-center leading-tight drop-shadow-sm" style="color: #0f172a;">${book.titel}</h1>
+          ${coverImgB64 ? `<div class="w-96 h-96 rounded-full overflow-hidden border-8 shadow-xl" style="border-color: #ffffff; background-color: #f1f5f9;"><div style="width: 100%; height: 100%; background-image: url('${coverImgB64}'); background-size: cover; background-position: center;"></div></div>` : ''}
           <div class="flex gap-4 mt-8">
-            <span class="bg-indigo-100 text-indigo-800 text-xl font-bold px-6 py-2 rounded-full shadow-sm">${book.zielalter}</span>
-            <span class="bg-pink-100 text-pink-800 text-xl font-bold px-6 py-2 rounded-full shadow-sm">${book.stimmung}</span>
+            <span class="text-xl font-bold px-6 py-2 rounded-full shadow-sm" style="background-color: #e0e7ff; color: #3730a3;">${book.zielalter}</span>
+            <span class="text-xl font-bold px-6 py-2 rounded-full shadow-sm" style="background-color: #fce7f3; color: #9d174d;">${book.stimmung}</span>
           </div>
       `;
       container.appendChild(coverDiv);
@@ -290,7 +278,8 @@ export default function App() {
           const pageDiv = document.createElement('div');
           pageDiv.style.width = '794px';
           pageDiv.style.height = '1123px';
-          pageDiv.className = "flex flex-col p-12 box-border relative bg-[#FFFDF2]";
+          pageDiv.style.backgroundColor = '#FFFDF2';
+          pageDiv.className = "flex flex-col p-12 box-border relative";
 
           const pageImgB64 = await getBase64Image(page.imageUrl || '');
           
@@ -302,29 +291,29 @@ export default function App() {
 
           if (layoutType === 'image-only') {
               pageDiv.innerHTML = `
-                <div class="flex-1 bg-slate-100 rounded-2xl overflow-hidden relative shadow-inner">
-                    ${pageImgB64 ? `<img src="${pageImgB64}" class="w-full h-full object-cover absolute inset-0" />` : ''}
+                <div class="flex-1 rounded-2xl overflow-hidden relative shadow-inner" style="background-color: #f1f5f9;">
+                    ${pageImgB64 ? `<div style="width: 100%; height: 100%; position: absolute; top: 0; left: 0; background-image: url('${pageImgB64}'); background-size: cover; background-position: center;"></div>` : ''}
                 </div>
-                <p class="absolute bottom-6 right-12 text-lg text-slate-400 font-bold">${i + 1} / ${book.seiten.length}</p>
+                <p class="absolute bottom-6 right-12 text-lg font-bold" style="color: #94a3b8;">${i + 1} / ${book.seiten.length}</p>
               `;
           } else if (layoutType === 'text-only') {
               pageDiv.innerHTML = `
                 <div class="flex-1 flex items-center justify-center p-16">
-                    <p class="font-serif text-center leading-[1.6] text-slate-800 ${fontSizeClass}">${page.text.replace(/\n/g, '<br/>')}</p>
+                    <p class="font-serif text-center leading-[1.6] ${fontSizeClass}" style="color: #1e293b;">${page.text.replace(/\n/g, '<br/>')}</p>
                 </div>
-                <p class="absolute bottom-6 right-12 text-lg text-slate-400 font-bold">${i + 1} / ${book.seiten.length}</p>
+                <p class="absolute bottom-6 right-12 text-lg font-bold" style="color: #94a3b8;">${i + 1} / ${book.seiten.length}</p>
               `;
           } else {
               pageDiv.innerHTML = `
                 <div class="flex-1 flex flex-col gap-8 pb-12">
-                    <div class="w-full h-[500px] rounded-2xl overflow-hidden bg-slate-100 relative shadow-inner shrink-0">
-                      ${pageImgB64 ? `<img src="${pageImgB64}" class="w-full h-full object-cover absolute inset-0" />` : ''}
+                    <div class="w-full h-[500px] rounded-2xl overflow-hidden relative shadow-inner shrink-0" style="background-color: #f1f5f9;">
+                      ${pageImgB64 ? `<div style="width: 100%; height: 100%; position: absolute; top: 0; left: 0; background-image: url('${pageImgB64}'); background-size: cover; background-position: center;"></div>` : ''}
                     </div>
                     <div class="flex-1 flex items-center justify-center px-8">
-                      <p class="font-serif text-center leading-[1.6] text-slate-800 ${fontSizeClass}">${page.text.replace(/\n/g, '<br/>')}</p>
+                      <p class="font-serif text-center leading-[1.6] ${fontSizeClass}" style="color: #1e293b;">${page.text.replace(/\n/g, '<br/>')}</p>
                     </div>
                 </div>
-                <p class="absolute bottom-6 right-12 text-lg text-slate-400 font-bold">${i + 1} / ${book.seiten.length}</p>
+                <p class="absolute bottom-6 right-12 text-lg font-bold" style="color: #94a3b8;">${i + 1} / ${book.seiten.length}</p>
               `;
           }
 
@@ -380,19 +369,21 @@ export default function App() {
     }
   };
 
-  const generateAndUploadPdf = async (book: AusgearbeitetesBuch) => {
+  const generateAndUploadPdf = async (book: AusgearbeitetesBuch): Promise<string | null> => {
     try {
       console.log("Starte automatischen PDF Upload für:", book.titel);
       const blob = await generatePdfBlob(book);
-      if (!blob) return;
+      if (!blob) return null;
 
       const storageRef = ref(storage, `buecher_pdfs/${book.id}.pdf`);
       await uploadBytes(storageRef, blob);
       const url = await getDownloadURL(storageRef);
       await updateDoc(doc(db, 'ausgearbeitete_buecher', book.id), { pdfUrl: url });
       console.log("PDF erfolgreich in Storage hochgeladen:", url);
+      return url;
     } catch (err) {
       console.error("Upload des PDFs in Storage fehlgeschlagen:", err);
+      return null;
     }
   };
 
@@ -1403,10 +1394,6 @@ Your output MUST have exactly this JSON format:
 
       const finalizedBook = { id: docRef.id, ...newBookData, seiten: pages, kosten_protokoll: kostenProtokoll } as AusgearbeitetesBuch;
       
-      if (currentUser?.email === ADMIN_EMAIL) {
-         generateAndUploadPdf(finalizedBook);
-      }
-
       setSelectedSkriptForBook(null);
       setActiveTab('books');
       fetchBooks();
@@ -1749,15 +1736,6 @@ Your output MUST have exactly this JSON format:
                     <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-2 py-1 rounded-md">{getTranslatedLabel('zielalter', book.zielalter)}</span>
                     <span className="bg-pink-100 text-pink-800 text-xs font-bold px-2 py-1 rounded-md">{getTranslatedLabel('stimmung', book.stimmung)}</span>
                     <span className="bg-slate-100 text-slate-600 text-xs font-bold px-2 py-1 rounded-md">{book.seitenAnzahl} {t('book.pages_suffix')}</span>
-                    {currentUser?.email === ADMIN_EMAIL && (
-                      <button onClick={(e) => { 
-                          e.stopPropagation(); 
-                          if (book.pdfUrl) window.open(book.pdfUrl, '_blank');
-                          else handleDownloadPDF(book); 
-                      }} className="ml-auto text-xs bg-red-100 text-red-800 font-bold px-3 py-1.5 rounded-md hover:bg-red-200 transition-colors cursor-pointer flex items-center gap-1">
-                        📄 <span className="hidden sm:inline">{book.pdfUrl ? 'PDF (Cloud)' : 'PDF Export'}</span>
-                      </button>
-                    )}
                     {currentUser?.email === ADMIN_EMAIL && book.kosten_protokoll && (
                       <div className="relative group ml-1">
                         <div className="text-xs bg-emerald-100 text-emerald-800 font-bold px-2 py-1 rounded-md cursor-help">
@@ -2054,13 +2032,34 @@ Your output MUST have exactly this JSON format:
           <div className="flex justify-between items-center p-4 bg-slate-800/80 backdrop-blur-md absolute top-0 w-full z-[80]">
             <h3 className="font-bold truncate px-4">{readingBook.titel}</h3>
             <div className="flex items-center gap-2">
+              {currentUser?.email === ADMIN_EMAIL && !readingBook.pdfUrl && (
+                <button 
+                  onClick={async (e) => { 
+                    e.stopPropagation(); 
+                    setIsLoading(true);
+                    const url = await generateAndUploadPdf(readingBook);
+                    if (url) {
+                      setReadingBook({ ...readingBook, pdfUrl: url });
+                      setAllFinishedBooks(prev => prev.map(b => b.id === readingBook.id ? { ...b, pdfUrl: url } : b));
+                      alert("PDF erfolgreich in die Cloud geladen!");
+                    } else {
+                      alert("Fehler beim Cloud Upload.");
+                    }
+                    setIsLoading(false);
+                  }} 
+                  disabled={isLoading}
+                  className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-4 py-2 rounded-full flex items-center gap-2 cursor-pointer transition-colors shrink-0 disabled:opacity-50"
+                >
+                  ☁️ <span className="hidden sm:inline">In Cloud speichern</span>
+                </button>
+              )}
               {currentUser?.email === ADMIN_EMAIL && (
                 <button onClick={(e) => { 
                     e.stopPropagation(); 
                     if (readingBook.pdfUrl) window.open(readingBook.pdfUrl, '_blank');
                     else handleDownloadPDF(readingBook); 
                 }} className="bg-red-500 hover:bg-red-600 text-white font-bold px-4 py-2 rounded-full flex items-center gap-2 cursor-pointer transition-colors shrink-0">
-                  📄 <span className="hidden sm:inline">{readingBook.pdfUrl ? 'PDF (Cloud)' : 'PDF Download'}</span>
+                  📄 <span className="hidden sm:inline">{readingBook.pdfUrl ? 'PDF (Cloud)' : 'PDF Lokaler Download'}</span>
                 </button>
               )}
               <button onClick={() => { setReadingBook(null); setCurrentReadingPage(0); }} className="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-full cursor-pointer transition-colors shrink-0">Schließen</button>
@@ -2235,35 +2234,6 @@ Your output MUST have exactly this JSON format:
                     />
                   </label>
                 </div>
-                {currentUser?.email === ADMIN_EMAIL && (
-                  <div className="flex flex-col sm:flex-row gap-4 mt-2">
-                    <button 
-                      onClick={async () => {
-                        setIsBackupLoading(true);
-                        let count = 0;
-                        try {
-                          for (const book of allFinishedBooks) {
-                            if (!book.pdfUrl) {
-                               console.log("Generiere PDF für:", book.titel);
-                               await generateAndUploadPdf(book);
-                               count++;
-                            }
-                          }
-                          alert(`Erfolgreich! ${count} verbleibende PDFs wurden hochgeladen.`);
-                          fetchFinishedBooks();
-                        } catch(e: any) {
-                          alert("Fehler: " + e.message);
-                        } finally {
-                          setIsBackupLoading(false);
-                        }
-                      }}
-                      disabled={isBackupLoading || allFinishedBooks.filter(b => !b.pdfUrl).length === 0}
-                      className="flex-1 bg-red-100 text-red-700 py-3 rounded-full font-bold shadow-sm hover:shadow-md transition-all sm:text-sm cursor-pointer disabled:opacity-50"
-                    >
-                      📄 Fehlende PDFs hochladen ({allFinishedBooks.filter(b => !b.pdfUrl).length})
-                    </button>
-                  </div>
-                )}
               </div>
               
               <div className="bg-slate-50 border border-slate-100 rounded-[24px] p-6 space-y-4">
