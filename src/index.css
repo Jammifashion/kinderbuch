@@ -5,11 +5,133 @@
   --font-magic: "Grand Hotel", cursive;
   --font-friendly: "Fredoka", sans-serif;
   --font-sans: "Fredoka", ui-sans-serif, system-ui, sans-serif;
+
+  /* Theme color mapping */
+  --color-theme-bg: var(--theme-bg);
+  --color-theme-card: var(--theme-card);
+  --color-theme-bg-soft: var(--theme-bg-soft);
+  --color-theme-bg-softer: var(--theme-bg-softer);
+  --color-theme-bg-mute: var(--theme-bg-mute);
+
+  --color-theme-border: var(--theme-border);
+  --color-theme-border-strong: var(--theme-border-strong);
+  
+  --color-theme-title: var(--theme-title);
+  --color-theme-base: var(--theme-base);
+  --color-theme-muted-strong: var(--theme-muted-strong);
+  --color-theme-muted: var(--theme-muted);
+  --color-theme-muted-light: var(--theme-muted-light);
+
+  --color-theme-primary: var(--theme-primary);
+  --color-theme-primary-strong: var(--theme-primary-strong);
+  --color-theme-primary-soft: var(--theme-primary-soft);
+  --color-theme-primary-softer: var(--theme-primary-softer);
+  --color-theme-primary-border: var(--theme-primary-border);
+}
+
+:root {
+  /* LIGHT MODE - DEFAULT (ORANGE) */
+  --theme-bg: #FFFDF2;
+  --theme-card: #ffffff;
+  --theme-bg-soft: #f8fafc;       /* slate-50 */
+  --theme-bg-softer: #f1f5f9;     /* slate-100 */
+  --theme-bg-mute: #e2e8f0;       /* slate-200 */
+  
+  --theme-border: #f1f5f9;        /* slate-100 */
+  --theme-border-strong: #e2e8f0; /* slate-200 */
+
+  --theme-title: #0f172a;         /* slate-900 */
+  --theme-base: #1e293b;          /* slate-800 */
+  --theme-muted-strong: #334155;  /* slate-700 */
+  --theme-muted: #64748b;         /* slate-500 */
+  --theme-muted-light: #94a3b8;   /* slate-400 */
+
+  --theme-primary: #f97316;       /* orange-500 */
+  --theme-primary-strong: #ea580c;/* orange-600 */
+  --theme-primary-soft: #ffedd5;  /* orange-100 */
+  --theme-primary-softer: #fff7ed;/* orange-50 */
+  --theme-primary-border: #fed7aa;/* orange-200 */
+}
+
+/* DARK MODE */
+:root.dark {
+  --theme-bg: #0f172a;            /* slate-900 */
+  --theme-card: #1e293b;          /* slate-800 */
+  --theme-bg-soft: #1e293b;       
+  --theme-bg-softer: #334155;     
+  --theme-bg-mute: #475569;       
+  
+  --theme-border: #334155;        
+  --theme-border-strong: #475569; 
+
+  --theme-title: #f8fafc;         
+  --theme-base: #f1f5f9;          
+  --theme-muted-strong: #cbd5e1;  
+  --theme-muted: #94a3b8;         
+  --theme-muted-light: #64748b;   
+}
+
+/* THEMES (Primary Colors Override) */
+:root[data-theme="mint"] {
+  --theme-primary: #10b981;       /* emerald-500 */
+  --theme-primary-strong: #059669;/* emerald-600 */
+  --theme-primary-soft: #d1fae5;  /* emerald-100 */
+  --theme-primary-softer: #ecfdf5;/* emerald-50 */
+  --theme-primary-border: #a7f3d0;/* emerald-200 */
+}
+:root.dark[data-theme="mint"] {
+  --theme-primary: #10b981;
+  --theme-primary-strong: #34d399;
+  --theme-primary-soft: #064e3b;
+  --theme-primary-softer: #022c22;
+  --theme-primary-border: #065f46;
+}
+
+:root[data-theme="ocean"] {
+  --theme-primary: #3b82f6;       /* blue-500 */
+  --theme-primary-strong: #2563eb;/* blue-600 */
+  --theme-primary-soft: #dbeafe;  /* blue-100 */
+  --theme-primary-softer: #eff6ff;/* blue-50 */
+  --theme-primary-border: #bfdbfe;/* blue-200 */
+}
+:root.dark[data-theme="ocean"] {
+  --theme-primary: #3b82f6;
+  --theme-primary-strong: #60a5fa;
+  --theme-primary-soft: #1e3a8a;
+  --theme-primary-softer: #172554;
+  --theme-primary-border: #1e40af;
+}
+
+:root[data-theme="berry"] {
+  --theme-primary: #a855f7;       /* purple-500 */
+  --theme-primary-strong: #9333ea;/* purple-600 */
+  --theme-primary-soft: #f3e8ff;  /* purple-100 */
+  --theme-primary-softer: #faf5ff;/* purple-50 */
+  --theme-primary-border: #e9d5ff;/* purple-200 */
+}
+:root.dark[data-theme="berry"] {
+  --theme-primary: #a855f7;
+  --theme-primary-strong: #c084fc;
+  --theme-primary-soft: #3b0764;
+  --theme-primary-softer: #2e1065;
+  --theme-primary-border: #581c87;
+}
+
+/* Adjustments for dark mode default orange */
+:root.dark[data-theme="orange"],
+:root.dark:not([data-theme]) {
+  --theme-primary: #f97316;
+  --theme-primary-strong: #fb923c;
+  --theme-primary-soft: #431407;
+  --theme-primary-softer: #2a0a02;
+  --theme-primary-border: #7c2d12;
 }
 
 html, body {
   overflow-x: hidden;
   max-width: 100vw;
+  background-color: var(--theme-bg);
+  color: var(--theme-base);
 }
 
 .scrollbar-hide::-webkit-scrollbar {

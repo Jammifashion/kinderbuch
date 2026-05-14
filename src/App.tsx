@@ -7,7 +7,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { db, auth, storage } from './lib/firebase';
 import { useLanguage } from './LanguageContext';
-import { collection, addDoc, serverTimestamp, getDocs, updateDoc, doc, deleteDoc, getDoc } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, getDocs, updateDoc, doc, deleteDoc, getDoc, query, where, onSnapshot } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -137,6 +137,15 @@ interface StoryResult {
 }
 
 
+export interface Avatar {
+  id: string;
+  userId: string;
+  avatarName: string;
+  imageUrl: string;
+  characterDescriptionEn: string;
+  createdAt: any;
+}
+
 export default function App() {
   const { language, setLanguage, t } = useLanguage();
   const [user, setUser] = useState<User | null>(null);
@@ -157,12 +166,18 @@ export default function App() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | 'selected' | null>(null);
   const [showDeleteFinishedConfirm, setShowDeleteFinishedConfirm] = useState<string | null>(null);
   
+  const [savingAvatarRef, setSavingAvatarRef] = useState<StoryResult | AusgearbeitetesBuch | null>(null);
+  const [newAvatarName, setNewAvatarName] = useState('');
+  const [isAvatarSaving, setIsAvatarSaving] = useState(false);
+  
   const [isBackupManagerOpen, setIsBackupManagerOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [autoBackups, setAutoBackups] = useState<any[]>([]);
   const [isBackupLoading, setIsBackupLoading] = useState(false);
   
   const [allFinishedBooks, setAllFinishedBooks] = useState<AusgearbeitetesBuch[]>([]);
+  const [savedAvatars, setSavedAvatars] = useState<Avatar[]>([]);
+  const [selectedAvatarId, setSelectedAvatarId] = useState<string | null>(null);
   const [selectedSkriptForBook, setSelectedSkriptForBook] = useState<StoryResult | null>(null);
   const [bookConfig, setBookConfig] = useState({ zielalter: '4-6 Jahre', stimmung: 'Lustig', seitenAnzahl: 12 });
   const [readingBook, setReadingBook] = useState<AusgearbeitetesBuch | null>(null);
@@ -183,6 +198,29 @@ export default function App() {
   });
   const [isEditingLabels, setIsEditingLabels] = useState(false);
   const [editingCustomLabels, setEditingCustomLabels] = useState<CustomLabel[]>([...customLabels]);
+
+  // Themes and Dark Mode
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    return localStorage.getItem('jammi_dark_mode') === 'true';
+  });
+  const [currentTheme, setCurrentTheme] = useState<string>(() => {
+    return localStorage.getItem('jammi_theme') || 'orange';
+  });
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (isDarkMode) {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+    localStorage.setItem('jammi_dark_mode', isDarkMode.toString());
+  }, [isDarkMode]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', currentTheme);
+    localStorage.setItem('jammi_theme', currentTheme);
+  }, [currentTheme]);
 
   const stats = useMemo(() => {
     const thirtyDaysAgo = new Date();
@@ -262,8 +300,8 @@ export default function App() {
       const coverImgB64 = await getBase64Image(book.coverImage || '');
       
       coverDiv.innerHTML = `
-          <h1 class="text-6xl font-magic text-center leading-tight drop-shadow-sm" style="color: #0f172a;">${book.titel}</h1>
-          ${coverImgB64 ? `<div class="w-96 h-96 rounded-full overflow-hidden border-8 shadow-xl" style="border-color: #ffffff; background-color: #f1f5f9;"><div style="width: 100%; height: 100%; background-image: url('${coverImgB64}'); background-size: cover; background-position: center;"></div></div>` : ''}
+          <h1 class="text-6xl font-magic text-center leading-tight drop-shadow-sm" style="color: var(--color-theme-title);">${book.titel}</h1>
+          ${coverImgB64 ? `<div class="w-96 h-96 rounded-full overflow-hidden border-8 shadow-xl" style="border-color: #ffffff; background-color: var(--color-theme-bg-softer);"><div style="width: 100%; height: 100%; background-image: url('${coverImgB64}'); background-size: cover; background-position: center;"></div></div>` : ''}
           <div class="flex gap-4 mt-8">
             <span class="text-xl font-bold px-6 py-2 rounded-full shadow-sm" style="background-color: #e0e7ff; color: #3730a3;">${book.zielalter}</span>
             <span class="text-xl font-bold px-6 py-2 rounded-full shadow-sm" style="background-color: #fce7f3; color: #9d174d;">${book.stimmung}</span>
@@ -291,29 +329,29 @@ export default function App() {
 
           if (layoutType === 'image-only') {
               pageDiv.innerHTML = `
-                <div class="flex-1 rounded-2xl overflow-hidden relative shadow-inner" style="background-color: #f1f5f9;">
+                <div class="flex-1 rounded-2xl overflow-hidden relative shadow-inner" style="background-color: var(--color-theme-bg-softer);">
                     ${pageImgB64 ? `<div style="width: 100%; height: 100%; position: absolute; top: 0; left: 0; background-image: url('${pageImgB64}'); background-size: cover; background-position: center;"></div>` : ''}
                 </div>
-                <p class="absolute bottom-6 right-12 text-lg font-bold" style="color: #94a3b8;">${i + 1} / ${book.seiten.length}</p>
+                <p class="absolute bottom-6 right-12 text-lg font-bold" style="color: var(--color-theme-muted-light);">${i + 1} / ${book.seiten.length}</p>
               `;
           } else if (layoutType === 'text-only') {
               pageDiv.innerHTML = `
                 <div class="flex-1 flex items-center justify-center p-16">
-                    <p class="font-serif text-center leading-[1.6] ${fontSizeClass}" style="color: #1e293b;">${page.text.replace(/\n/g, '<br/>')}</p>
+                    <p class="font-serif text-center leading-[1.6] ${fontSizeClass}" style="color: var(--color-theme-base);">${page.text.replace(/\n/g, '<br/>')}</p>
                 </div>
-                <p class="absolute bottom-6 right-12 text-lg font-bold" style="color: #94a3b8;">${i + 1} / ${book.seiten.length}</p>
+                <p class="absolute bottom-6 right-12 text-lg font-bold" style="color: var(--color-theme-muted-light);">${i + 1} / ${book.seiten.length}</p>
               `;
           } else {
               pageDiv.innerHTML = `
                 <div class="flex-1 flex flex-col gap-8 pb-12">
-                    <div class="w-full h-[500px] rounded-2xl overflow-hidden relative shadow-inner shrink-0" style="background-color: #f1f5f9;">
+                    <div class="w-full h-[500px] rounded-2xl overflow-hidden relative shadow-inner shrink-0" style="background-color: var(--color-theme-bg-softer);">
                       ${pageImgB64 ? `<div style="width: 100%; height: 100%; position: absolute; top: 0; left: 0; background-image: url('${pageImgB64}'); background-size: cover; background-position: center;"></div>` : ''}
                     </div>
                     <div class="flex-1 flex items-center justify-center px-8">
-                      <p class="font-serif text-center leading-[1.6] ${fontSizeClass}" style="color: #1e293b;">${page.text.replace(/\n/g, '<br/>')}</p>
+                      <p class="font-serif text-center leading-[1.6] ${fontSizeClass}" style="color: var(--color-theme-base);">${page.text.replace(/\n/g, '<br/>')}</p>
                     </div>
                 </div>
-                <p class="absolute bottom-6 right-12 text-lg font-bold" style="color: #94a3b8;">${i + 1} / ${book.seiten.length}</p>
+                <p class="absolute bottom-6 right-12 text-lg font-bold" style="color: var(--color-theme-muted-light);">${i + 1} / ${book.seiten.length}</p>
               `;
           }
 
@@ -330,12 +368,12 @@ export default function App() {
           format: 'a4'
       });
 
-      const coverCanvas = await html2canvas(coverDiv, { scale: 2, useCORS: true, backgroundColor: '#FFFDF2', logging: false });
+      const coverCanvas = await html2canvas(coverDiv, { scale: 2, useCORS: true, backgroundColor: 'var(--color-theme-bg)', logging: false });
       pdfDoc.addImage(coverCanvas.toDataURL('image/jpeg', 0.9), 'JPEG', 0, 0, 210, 297);
 
       for (let i = 0; i < pageDivs.length; i++) {
           pdfDoc.addPage();
-          const pageCanvas = await html2canvas(pageDivs[i], { scale: 2, useCORS: true, backgroundColor: '#FFFDF2', logging: false });
+          const pageCanvas = await html2canvas(pageDivs[i], { scale: 2, useCORS: true, backgroundColor: 'var(--color-theme-bg)', logging: false });
           pdfDoc.addImage(pageCanvas.toDataURL('image/jpeg', 0.9), 'JPEG', 0, 0, 210, 297);
       }
 
@@ -413,33 +451,37 @@ export default function App() {
     return (
     <div className="space-y-8 animate-in fade-in duration-500">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6">
-        <button onClick={() => setActiveTab('create')} className="bg-white p-8 rounded-[32px] shadow-sm border border-slate-100 hover:border-orange-200 transition-all flex flex-col items-center gap-4 text-center cursor-pointer">
+        <button onClick={() => setActiveTab('create')} className="bg-theme-card p-8 rounded-[32px] shadow-sm border border-theme-border hover:border-theme-primary-border transition-all flex flex-col items-center gap-4 text-center cursor-pointer">
           <span className="text-5xl">✍️</span>
-          <span className="font-bold text-xl text-slate-800">{t('dashboard.new_story')}</span>
+          <span className="font-bold text-xl text-theme-base">{t('dashboard.new_story')}</span>
         </button>
-        <button onClick={() => setActiveTab('library')} className="bg-white p-8 rounded-[32px] shadow-sm border border-slate-100 hover:border-orange-200 transition-all flex flex-col items-center gap-4 text-center cursor-pointer">
+        <button onClick={() => setActiveTab('avatars')} className="bg-theme-card p-8 rounded-[32px] shadow-sm border border-theme-border hover:border-theme-primary-border transition-all flex flex-col items-center gap-4 text-center cursor-pointer">
+          <span className="text-5xl">🦸</span>
+          <span className="font-bold text-xl text-theme-base">Helden-Galerie</span>
+        </button>
+        <button onClick={() => setActiveTab('library')} className="bg-theme-card p-8 rounded-[32px] shadow-sm border border-theme-border hover:border-theme-primary-border transition-all flex flex-col items-center gap-4 text-center cursor-pointer">
           <span className="text-5xl">📜</span>
-          <span className="font-bold text-xl text-slate-800">{t('dashboard.my_scripts')} ({allBooks.length})</span>
+          <span className="font-bold text-xl text-theme-base">{t('dashboard.my_scripts')} ({allBooks.length})</span>
         </button>
-        <button onClick={() => setActiveTab('books')} className="bg-white p-8 rounded-[32px] shadow-sm border border-slate-100 hover:border-orange-200 transition-all flex flex-col items-center gap-4 text-center cursor-pointer">
+        <button onClick={() => setActiveTab('books')} className="bg-theme-card p-8 rounded-[32px] shadow-sm border border-theme-border hover:border-theme-primary-border transition-all flex flex-col items-center gap-4 text-center cursor-pointer">
           <span className="text-5xl">📚</span>
-          <span className="font-bold text-xl text-slate-800">{t('dashboard.my_books')} ({allFinishedBooks.length})</span>
+          <span className="font-bold text-xl text-theme-base">{t('dashboard.my_books')} ({allFinishedBooks.length})</span>
         </button>
-        <button onClick={() => setIsBackupManagerOpen(true)} className="bg-white p-8 rounded-[32px] shadow-sm border border-slate-100 hover:border-orange-200 transition-all flex flex-col items-center gap-4 text-center cursor-pointer">
+        <button onClick={() => setIsBackupManagerOpen(true)} className="bg-theme-card p-8 rounded-[32px] shadow-sm border border-theme-border hover:border-theme-primary-border transition-all flex flex-col items-center gap-4 text-center cursor-pointer">
           <span className="text-5xl">💾</span>
-          <span className="font-bold text-xl text-slate-800">{t('dashboard.backup_manager')}</span>
+          <span className="font-bold text-xl text-theme-base">{t('dashboard.backup_manager')}</span>
         </button>
       </div>
 
-      <div className="bg-white p-6 rounded-3xl border border-slate-100 flex items-center justify-between shadow-sm">
-        <div className="text-sm font-bold text-slate-400 uppercase tracking-widest">{t('dashboard.cost_overview')} {liveSpend !== null ? t('dashboard.live') : t('dashboard.estimated')}</div>
+      <div className="bg-theme-card p-6 rounded-3xl border border-theme-border flex items-center justify-between shadow-sm">
+        <div className="text-sm font-bold text-theme-muted-light uppercase tracking-widest">{t('dashboard.cost_overview')} {liveSpend !== null ? t('dashboard.live') : t('dashboard.estimated')}</div>
         <div className="flex items-center gap-4">
             {liveSpend === null && (
-                <button onClick={fetchBilling} disabled={isLoadingStats} className="text-xs text-orange-600 font-bold hover:underline cursor-pointer">
+                <button onClick={fetchBilling} disabled={isLoadingStats} className="text-xs text-theme-primary font-bold hover:underline cursor-pointer">
                     {isLoadingStats ? t('common.loading') : t('dashboard.fetch_costs')}
                 </button>
             )}
-            <div className="font-bold text-slate-800">{liveSpend !== null ? `$${liveSpend.toFixed(2)}` : `$${stats.total.toFixed(2)}`}</div>
+            <div className="font-bold text-theme-base">{liveSpend !== null ? `$${liveSpend.toFixed(2)}` : `$${stats.total.toFixed(2)}`}</div>
         </div>
       </div>
     </div>
@@ -495,6 +537,7 @@ export default function App() {
       if (authUser) {
         fetchBooks();
         fetchFinishedBooks();
+        fetchAvatars(authUser.uid);
         if (authUser.email === ADMIN_EMAIL) {
           checkAndCreateAutoBackup();
         }
@@ -553,6 +596,53 @@ export default function App() {
     }
   };
 
+  const fetchAvatars = async (uid: string) => {
+    try {
+      // In development mode, we might be pretending to be dev-user, but wait: isDevMode handles currentUser, let's use the effective uid
+      const effectiveUid = isDevMode ? 'dev-user' : uid;
+      const q = query(collection(db, 'avatars'), where('userId', '==', effectiveUid));
+      const querySnapshot = await getDocs(q);
+      const avatars = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Avatar));
+      setSavedAvatars(avatars.sort((a,b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0)));
+    } catch (err) {
+      console.error("Error fetching avatars:", err);
+    }
+  };
+
+  const handleSaveAvatar = async () => {
+    if (!savingAvatarRef || !newAvatarName.trim() || !currentUser) return;
+    setIsAvatarSaving(true);
+    try {
+      const chara = savingAvatarRef.hauptcharakter;
+      if (!chara || !chara.avatar_url) return;
+      const docRef = await addDoc(collection(db, 'avatars'), {
+        userId: isDevMode ? 'dev-user' : currentUser.uid,
+        avatarName: newAvatarName.trim(),
+        imageUrl: chara.avatar_url,
+        characterDescriptionEn: chara.bild_prompt_en,
+        createdAt: serverTimestamp()
+      });
+      // reload avatars
+      fetchAvatars(isDevMode ? 'dev-user' : currentUser.uid);
+      setSavingAvatarRef(null);
+      setNewAvatarName('');
+    } catch(err) {
+      handleFirestoreError(err, OperationType.CREATE, 'avatars');
+    } finally {
+      setIsAvatarSaving(false);
+    }
+  };
+
+  const handleDeleteAvatar = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'avatars', id));
+      setSavedAvatars(prev => prev.filter(a => a.id !== id));
+      if (selectedAvatarId === id) setSelectedAvatarId(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `avatars/${id}`);
+    }
+  };
+
   const handleLogin = async () => {
     const provider = new GoogleAuthProvider();
     try {
@@ -564,42 +654,79 @@ export default function App() {
 
   const handleDevLogin = () => {
     setIsDevMode(true);
+    fetchBooks();
+    fetchFinishedBooks();
+    fetchAvatars('dev-user');
   };
 
   const currentUser = isDevMode ? { email: ADMIN_EMAIL, uid: 'dev-user' } : user;
 
   if (!currentUser) {
     return (
-      <div className="flex h-screen flex-col items-center justify-center bg-[#FFFDF2] p-4 text-center">
-        <div className="mb-4 flex gap-2 p-1 bg-white rounded-full shadow-sm border border-slate-100">
-          <button 
-            onClick={() => setLanguage('de')} 
-            className={`w-10 h-10 flex items-center justify-center rounded-full transition-all ${language === 'de' ? 'bg-orange-100 scale-110 shadow-inner' : 'grayscale opacity-50 hover:grayscale-0 hover:opacity-100'}`}
-            title="Deutsch"
-          >
-            🇩🇪
-          </button>
-          <button 
-            onClick={() => setLanguage('en')} 
-            className={`w-10 h-10 flex items-center justify-center rounded-full transition-all ${language === 'en' ? 'bg-orange-100 scale-110 shadow-inner' : 'grayscale opacity-50 hover:grayscale-0 hover:opacity-100'}`}
-            title="English"
-          >
-            EN
-          </button>
+      <div className="flex h-screen flex-col items-center justify-center bg-theme-bg p-4 text-center">
+        <div className="flex gap-4 mb-4 flex-wrap justify-center">
+          <div className="flex gap-2 p-1 bg-theme-card rounded-full shadow-sm border border-theme-border">
+            <button 
+              onClick={() => setLanguage('de')} 
+              className={`w-10 h-10 flex items-center justify-center rounded-full transition-all ${language === 'de' ? 'bg-theme-primary-soft scale-110 shadow-inner' : 'grayscale opacity-50 hover:grayscale-0 hover:opacity-100'}`}
+              title="Deutsch"
+            >
+              🇩🇪
+            </button>
+            <button 
+              onClick={() => setLanguage('en')} 
+              className={`w-10 h-10 flex items-center justify-center rounded-full transition-all ${language === 'en' ? 'bg-theme-primary-soft scale-110 shadow-inner' : 'grayscale opacity-50 hover:grayscale-0 hover:opacity-100'}`}
+              title="English"
+            >
+              EN
+            </button>
+          </div>
+          
+          {/* Dark Mode and Theme Switcher */}
+          <div className="flex gap-1 p-1 bg-theme-card rounded-full shadow-sm border border-theme-border flex-wrap justify-center items-center">
+            <button
+              onClick={() => setIsDarkMode(!isDarkMode)}
+              className="w-10 h-10 flex items-center justify-center rounded-full transition-all hover:bg-theme-bg-soft"
+              title="Dunkelmodus"
+            >
+              <span className="text-xl">{isDarkMode ? '🌙' : '☀️'}</span>
+            </button>
+            <div className="w-px h-8 bg-theme-border my-auto mx-2"></div>
+            <button
+              onClick={() => setCurrentTheme('orange')}
+              className={`w-8 h-8 m-1 rounded-full border-2 transition-all ${currentTheme === 'orange' ? 'border-theme-title scale-110' : 'border-transparent opacity-70 hover:opacity-100'} bg-orange-500`}
+              title="Farbthema: Orange"
+            ></button>
+            <button
+              onClick={() => setCurrentTheme('mint')}
+              className={`w-8 h-8 m-1 rounded-full border-2 transition-all ${currentTheme === 'mint' ? 'border-theme-title scale-110' : 'border-transparent opacity-70 hover:opacity-100'} bg-emerald-500`}
+              title="Farbthema: Minze"
+            ></button>
+            <button
+              onClick={() => setCurrentTheme('ocean')}
+              className={`w-8 h-8 m-1 rounded-full border-2 transition-all ${currentTheme === 'ocean' ? 'border-theme-title scale-110' : 'border-transparent opacity-70 hover:opacity-100'} bg-blue-500`}
+              title="Farbthema: Ozean"
+            ></button>
+            <button
+              onClick={() => setCurrentTheme('berry')}
+              className={`w-8 h-8 m-1 rounded-full border-2 transition-all ${currentTheme === 'berry' ? 'border-theme-title scale-110' : 'border-transparent opacity-70 hover:opacity-100'} bg-purple-500`}
+              title="Farbthema: Beere"
+            ></button>
+          </div>
         </div>
         <div className="mb-8 flex flex-col items-center animate-in fade-in zoom-in duration-1000">
-          <div className="w-24 h-24 bg-white rounded-[32px] shadow-xl flex items-center justify-center text-5xl mb-6 border-4 border-orange-50">📖</div>
-          <h1 className="text-6xl font-magic text-slate-900 mb-2 drop-shadow-sm">{t('common.app_name')}</h1>
-          <p className="text-slate-500 font-medium tracking-wide border-t border-slate-100 pt-2 px-4 uppercase text-[10px]">{t('common.tagline')}</p>
+          <div className="w-24 h-24 bg-theme-card rounded-[32px] shadow-xl flex items-center justify-center text-5xl mb-6 border-4 border-theme-primary-softer">📖</div>
+          <h1 className="text-6xl font-magic text-theme-title mb-2 drop-shadow-sm">{t('common.app_name')}</h1>
+          <p className="text-theme-muted font-medium tracking-wide border-t border-theme-border pt-2 px-4 uppercase text-[10px]">{t('common.tagline')}</p>
         </div>
 
         {whitelistError && (
-          <div className="mb-6 p-4 max-w-xs bg-white border border-orange-200 rounded-3xl text-orange-700 text-sm font-bold shadow-sm animate-in slide-in-from-top-4 duration-300">
+          <div className="mb-6 p-4 max-w-xs bg-theme-card border border-theme-primary-border rounded-3xl text-theme-primary-strong text-sm font-bold shadow-sm animate-in slide-in-from-top-4 duration-300">
             {whitelistError}
           </div>
         )}
 
-        <button onClick={handleLogin} className="w-full max-w-xs rounded-full bg-orange-500 px-8 py-5 text-xl font-bold text-white shadow-[0_8px_0_rgb(194,65,12)] hover:-translate-y-1 hover:shadow-[0_10px_0_rgb(194,65,12)] active:translate-y-1 active:shadow-none transition-all cursor-pointer">
+        <button onClick={handleLogin} className="w-full max-w-xs rounded-full bg-theme-primary px-8 py-5 text-xl font-bold text-white shadow-[0_8px_0_rgb(194,65,12)] hover:-translate-y-1 hover:shadow-[0_10px_0_rgb(194,65,12)] active:translate-y-1 active:shadow-none transition-all cursor-pointer">
           {t('common.login')}
         </button>
         <p className="text-[10px] text-stone-400 text-center max-w-sm mt-8 leading-relaxed">
@@ -611,11 +738,11 @@ export default function App() {
 
   if (currentUser.email && !ALLOWED_EMAILS.includes(currentUser.email.toLowerCase())) {
     return (
-      <div className="flex h-screen items-center justify-center bg-[#FFFDF2] p-6 text-center">
-        <div className="rounded-[40px] bg-white p-10 shadow-xl">
-          <h1 className="text-3xl font-bold text-orange-600">{t('common.access_denied')}</h1>
-          <p className="mt-4 text-slate-500">{whitelistError || t('common.no_permission')}</p>
-          <button onClick={() => { signOut(auth); setIsDevMode(false); setWhitelistError(null); }} className="mt-6 rounded-full bg-slate-200 px-6 py-2">{t('common.logout')}</button>
+      <div className="flex h-screen items-center justify-center bg-theme-bg p-6 text-center">
+        <div className="rounded-[40px] bg-theme-card p-10 shadow-xl">
+          <h1 className="text-3xl font-bold text-theme-primary">{t('common.access_denied')}</h1>
+          <p className="mt-4 text-theme-muted">{whitelistError || t('common.no_permission')}</p>
+          <button onClick={() => { signOut(auth); setIsDevMode(false); setWhitelistError(null); }} className="mt-6 rounded-full bg-theme-bg-mute px-6 py-2">{t('common.logout')}</button>
         </div>
       </div>
     );
@@ -692,11 +819,21 @@ export default function App() {
         return;
       }
 
+      let heroInstruction = `ABOUT THE MAIN CHARACTER: The 'bild_prompt_en' MUST be a 'Complete Outfit Blueprint'. Define ALL pieces of clothing (headwear, top, bottom, shoes, accessories) with fixed colors and styles. Anything not explicitly defined leads to inconsistencies.`;
+      
+      const selectedAvatar = savedAvatars.find(a => a.id === selectedAvatarId);
+      if (selectedAvatar) {
+        heroInstruction = `ABOUT THE MAIN CHARACTER: YOU MUST USE EXACTLY THIS ALREADY EXISTING CHARACTER AND DO NOT INVENT A NEW ONE! 
+        - name: "${selectedAvatar.avatarName}"
+        - bild_prompt_en MUST BE EXACTLY: "${selectedAvatar.characterDescriptionEn}"
+        Modify the gattung, persoenlichkeit and aussehen_de to broadly match this character, but keep the name and bild_prompt_en EXACTLY as provided above!`;
+      }
+
       const prompt = `Create a children's book concept based on the idea: "${idea}". The response MUST be a valid JSON object matching this exact structure (no markdown, no extra characters). 
       IMPORTANT: All fields (titles, storyline, character description) EXCEPT 'bild_prompt_en' MUST be in ${language.toUpperCase()}. 
       'bild_prompt_en' MUST ALWAYS BE IN ENGLISH.
       
-      ABOUT THE MAIN CHARACTER: The 'bild_prompt_en' MUST be a 'Complete Outfit Blueprint'. Define ALL pieces of clothing (headwear, top, bottom, shoes, accessories) with fixed colors and styles. Anything not explicitly defined leads to inconsistencies.
+      ${heroInstruction}
       
       {
         "titel_optionen": ["...", "...", "..."],
@@ -718,6 +855,12 @@ export default function App() {
       const text = response.text || '';
       const cleanJson = text.replace(/```json\n?|\n?```/g, '').trim();
       const storyData: StoryResult = JSON.parse(cleanJson);
+      
+      if (selectedAvatar) {
+        storyData.hauptcharakter.name = selectedAvatar.avatarName;
+        storyData.hauptcharakter.bild_prompt_en = selectedAvatar.characterDescriptionEn;
+        storyData.hauptcharakter.avatar_url = selectedAvatar.imageUrl;
+      }
 
       // Save to Firestore
       try {
@@ -1429,29 +1572,61 @@ Your output MUST have exactly this JSON format:
   });
 
   return (
-    <div className="min-h-screen bg-[#FFFDF2] p-4 sm:p-6 font-sans text-slate-800 w-full max-w-full overflow-x-hidden relative">
-      <header className="mb-6 sm:mb-12 flex flex-col items-center justify-center mt-2 sm:mt-4 relative z-40 bg-[#FFFDF2] gap-4">
+    <div className="min-h-screen bg-theme-bg p-4 sm:p-6 font-sans text-theme-base w-full max-w-full overflow-x-hidden relative">
+      <header className="mb-6 sm:mb-12 flex flex-col items-center justify-center mt-2 sm:mt-4 relative z-40 bg-theme-bg gap-4">
         <div className="flex flex-col md:flex-row items-center gap-4">
-          <h1 className="text-3xl sm:text-4xl md:text-5xl font-magic tracking-normal text-orange-600 drop-shadow-[0_2px_2px_rgba(249,115,22,0.2)] text-center">
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-magic tracking-normal text-theme-primary drop-shadow-[0_2px_2px_rgba(249,115,22,0.2)] text-center">
             {t('common.slogan')}
           </h1>
           
           {/* Language Switcher in Header */}
-          <div className="flex gap-1 p-1 bg-white rounded-full shadow-sm border border-orange-50">
+          <div className="flex gap-2 p-1 bg-theme-card rounded-full shadow-sm border border-theme-primary-softer">
             <button 
               onClick={() => setLanguage('de')} 
-              className={`w-8 h-8 flex items-center justify-center rounded-full transition-all text-xs ${language === 'de' ? 'bg-orange-100 shadow-inner' : 'grayscale opacity-50 hover:grayscale-0 hover:opacity-100'}`}
+              className={`w-8 h-8 flex items-center justify-center rounded-full transition-all text-xs ${language === 'de' ? 'bg-theme-primary-soft shadow-inner' : 'grayscale opacity-50 hover:grayscale-0 hover:opacity-100'}`}
               title="Deutsch"
             >
               🇩🇪
             </button>
             <button 
               onClick={() => setLanguage('en')} 
-              className={`w-8 h-8 flex items-center justify-center rounded-full transition-all text-xs ${language === 'en' ? 'bg-orange-100 shadow-inner' : 'grayscale opacity-50 hover:grayscale-0 hover:opacity-100'}`}
+              className={`w-8 h-8 flex items-center justify-center rounded-full transition-all text-xs ${language === 'en' ? 'bg-theme-primary-soft shadow-inner' : 'grayscale opacity-50 hover:grayscale-0 hover:opacity-100'}`}
               title="English"
             >
               EN
             </button>
+          </div>
+          
+          {/* Dark Mode and Theme Switcher */}
+          <div className="flex gap-1 p-1 bg-theme-card rounded-full shadow-sm border border-theme-border flex-wrap justify-center">
+            <button
+              onClick={() => setIsDarkMode(!isDarkMode)}
+              className="w-8 h-8 flex items-center justify-center rounded-full transition-all text-sm hover:bg-theme-bg-soft"
+              title="Dunkelmodus"
+            >
+              {isDarkMode ? '🌙' : '☀️'}
+            </button>
+            <div className="w-px h-6 bg-theme-border my-auto mx-1"></div>
+            <button
+              onClick={() => setCurrentTheme('orange')}
+              className={`w-6 h-6 m-1 rounded-full border-2 transition-all ${currentTheme === 'orange' ? 'border-theme-title scale-110' : 'border-transparent opacity-70 hover:opacity-100'} bg-orange-500`}
+              title="Farbthema: Orange"
+            ></button>
+            <button
+              onClick={() => setCurrentTheme('mint')}
+              className={`w-6 h-6 m-1 rounded-full border-2 transition-all ${currentTheme === 'mint' ? 'border-theme-title scale-110' : 'border-transparent opacity-70 hover:opacity-100'} bg-emerald-500`}
+              title="Farbthema: Minze"
+            ></button>
+            <button
+              onClick={() => setCurrentTheme('ocean')}
+              className={`w-6 h-6 m-1 rounded-full border-2 transition-all ${currentTheme === 'ocean' ? 'border-theme-title scale-110' : 'border-transparent opacity-70 hover:opacity-100'} bg-blue-500`}
+              title="Farbthema: Ozean"
+            ></button>
+            <button
+              onClick={() => setCurrentTheme('berry')}
+              className={`w-6 h-6 m-1 rounded-full border-2 transition-all ${currentTheme === 'berry' ? 'border-theme-title scale-110' : 'border-transparent opacity-70 hover:opacity-100'} bg-purple-500`}
+              title="Farbthema: Beere"
+            ></button>
           </div>
         </div>
         
@@ -1461,7 +1636,7 @@ Your output MUST have exactly this JSON format:
           <div className="hidden md:flex gap-3">
             <button 
               onClick={() => setIsBackupManagerOpen(true)} 
-              className="rounded-full bg-white border border-orange-100 flex items-center justify-center w-10 h-10 text-xl shadow-sm hover:bg-orange-50 transition-all cursor-pointer" 
+              className="rounded-full bg-theme-card border border-theme-primary-soft flex items-center justify-center w-10 h-10 text-xl shadow-sm hover:bg-theme-primary-softer transition-all cursor-pointer" 
               title={t('dashboard.backup_manager')}
             >
               💾
@@ -1477,7 +1652,7 @@ Your output MUST have exactly this JSON format:
           {/* Mobile Burger Icon (now centered below title on mobile or side-by-side) */}
           <button 
             onClick={() => setIsMobileMenuOpen(true)} 
-            className="md:hidden flex items-center gap-2 px-4 py-2 bg-white rounded-full shadow-sm text-sm font-bold cursor-pointer text-slate-700 border border-slate-100 hover:bg-slate-50 transition-all"
+            className="md:hidden flex items-center gap-2 px-4 py-2 bg-theme-card rounded-full shadow-sm text-sm font-bold cursor-pointer text-theme-muted-strong border border-theme-border hover:bg-theme-bg-soft transition-all"
           >
             <span>{t('common.menu')}</span>
             <span className="text-lg">☰</span>
@@ -1486,28 +1661,85 @@ Your output MUST have exactly this JSON format:
       </header>
       
       <main className="mx-auto max-w-3xl">
-        <div className="hidden md:flex gap-2 sm:gap-4 border-b border-orange-200 mb-8 overflow-x-auto pb-2 scrollbar-hide">
-          <button onClick={() => setActiveTab('dashboard')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'dashboard' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>{t('dashboard.new_story_nav')}</button>
-          <button onClick={() => setActiveTab('create')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'create' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>{t('dashboard.new_story')}</button>
-          <button onClick={() => setActiveTab('library')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'library' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>{t('library.title')} ({allBooks.length})</button>
-          <button onClick={() => setActiveTab('books')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'books' ? 'border-orange-500 text-orange-600' : 'border-transparent text-slate-500 hover:text-orange-500'}`}>{t('book.title')} ({allFinishedBooks.length})</button>
+        <div className="hidden md:flex gap-2 sm:gap-4 border-b border-theme-primary-border mb-8 overflow-x-auto pb-2 scrollbar-hide">
+          <button onClick={() => setActiveTab('dashboard')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'dashboard' ? 'border-theme-primary text-theme-primary' : 'border-transparent text-theme-muted hover:text-theme-primary'}`}>{t('dashboard.new_story_nav')}</button>
+          <button onClick={() => setActiveTab('avatars')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'avatars' ? 'border-theme-primary text-theme-primary' : 'border-transparent text-theme-muted hover:text-theme-primary'}`}>🦸 Helden-Galerie</button>
+          <button onClick={() => setActiveTab('create')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'create' ? 'border-theme-primary text-theme-primary' : 'border-transparent text-theme-muted hover:text-theme-primary'}`}>{t('dashboard.new_story')}</button>
+          <button onClick={() => setActiveTab('library')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'library' ? 'border-theme-primary text-theme-primary' : 'border-transparent text-theme-muted hover:text-theme-primary'}`}>{t('library.title')} ({allBooks.length})</button>
+          <button onClick={() => setActiveTab('books')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'books' ? 'border-theme-primary text-theme-primary' : 'border-transparent text-theme-muted hover:text-theme-primary'}`}>{t('book.title')} ({allFinishedBooks.length})</button>
         </div>
 
-        {activeTab === 'dashboard' ? <Dashboard /> : activeTab === 'create' ? (
+        {activeTab === 'dashboard' ? <Dashboard /> : activeTab === 'avatars' ? (
+          <div className="mb-8 rounded-[40px] bg-theme-card p-8 shadow-xl border-4 border-theme-primary-softer">
+            <h2 className="text-2xl font-bold text-theme-title mb-6">Deine Helden-Galerie</h2>
+            {savedAvatars.length === 0 ? (
+              <p className="text-theme-muted italic">Du hast noch keine Helden gespeichert. Erstelle ein Buch und speichere den Helden im Buch-Skript!</p>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-6">
+                {savedAvatars.map(avatar => (
+                  <div 
+                    key={avatar.id} 
+                    className="flex flex-col items-center gap-3 cursor-pointer group"
+                    onClick={() => {
+                      setSelectedAvatarId(avatar.id);
+                      setActiveTab('create');
+                    }}
+                  >
+                    <div className="relative w-full">
+                      <img src={avatar.imageUrl} alt={avatar.avatarName} className="w-full aspect-square object-cover rounded-3xl shadow-sm border-4 border-theme-bg-softer group-hover:border-theme-primary transition-all duration-300" />
+                      <div className="absolute inset-0 rounded-3xl bg-theme-primary/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <span className="bg-white text-theme-primary font-bold px-3 py-1 rounded-full shadow text-xs">Aussuchen</span>
+                      </div>
+                    </div>
+                    <span className="font-bold text-sm text-theme-base group-hover:text-theme-primary-strong transition-colors text-center">{avatar.avatarName}</span>
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); handleDeleteAvatar(avatar.id); }}
+                      className="text-[10px] bg-red-100 text-red-600 px-2 py-1 rounded shadow-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-200"
+                    >
+                      Löschen
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : activeTab === 'create' ? (
           <>
-            <div className="mb-8 rounded-[40px] bg-white p-8 shadow-xl border-4 border-orange-50">
+            <div className="mb-8 rounded-[40px] bg-theme-card p-8 shadow-xl border-4 border-theme-primary-softer">
               <textarea
                 id="ideaTextarea"
-                className="w-full rounded-3xl bg-slate-50 border-2 border-slate-100 p-6 text-lg focus:outline-none focus:border-orange-200 transition-all"
+                className="w-full rounded-3xl bg-theme-bg-soft border-2 border-theme-border p-6 text-lg focus:outline-none focus:border-theme-primary-border transition-all"
                 rows={4}
                 placeholder={t('create.placeholder')}
                 value={idea}
                 onChange={(e) => setIdea(e.target.value)}
               />
+              
+              <div className="mt-6 mb-2">
+                <h3 className="font-bold text-theme-base mb-3 text-sm">Oder wähle einen deiner Helden:</h3>
+                {savedAvatars.length === 0 ? (
+                  <p className="text-xs text-theme-muted italic">Noch keine Helden gespeichert. Erstelle eine Geschichte und speichere deinen ersten Held in der Helden-Galerie!</p>
+                ) : (
+                  <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide snap-x">
+                    {savedAvatars.map(avatar => (
+                      <div 
+                        key={avatar.id}
+                        onClick={() => setSelectedAvatarId(selectedAvatarId === avatar.id ? null : avatar.id)}
+                        className={`min-w-[80px] w-20 flex flex-col items-center gap-2 cursor-pointer transition-all snap-start ${selectedAvatarId === avatar.id ? 'scale-110 opacity-100' : 'opacity-60 hover:opacity-100'}`}
+                        title={avatar.avatarName}
+                      >
+                        <img src={avatar.imageUrl} alt={avatar.avatarName} className={`w-20 h-20 rounded-2xl object-cover border-4 ${selectedAvatarId === avatar.id ? 'border-theme-primary shadow-lg' : 'border-transparent shadow-sm'}`} />
+                        <span className={`text-[10px] font-bold text-center truncate w-full px-1 ${selectedAvatarId === avatar.id ? 'text-theme-primary-strong' : 'text-theme-muted'}`}>{avatar.avatarName}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <button
                 onClick={handleGenerateInspiration}
                 disabled={isInspirationLoading}
-                className="mt-2 text-sm font-bold text-orange-600 hover:text-orange-700 flex items-center justify-center gap-2 w-full py-2"
+                className="mt-2 text-sm font-bold text-theme-primary hover:text-theme-primary-strong flex items-center justify-center gap-2 w-full py-2"
               >
                 {isInspirationLoading ? t('create.inspiration_loading') : t('create.inspiration_btn')}
               </button>
@@ -1515,7 +1747,7 @@ Your output MUST have exactly this JSON format:
                 id="generateButton"
                 onClick={handleGenerate}
                 disabled={isLoading || !idea}
-                className="mt-6 w-full rounded-3xl bg-orange-500 py-5 text-xl font-bold text-white transition-all shadow-[0_8px_0_rgb(194,65,12)] active:translate-y-1 active:shadow-none disabled:bg-slate-300 disabled:shadow-none"
+                className="mt-6 w-full rounded-3xl bg-theme-primary py-5 text-xl font-bold text-white transition-all shadow-[0_8px_0_rgb(194,65,12)] active:translate-y-1 active:shadow-none disabled:bg-slate-300 disabled:shadow-none"
               >
                 {isLoading ? t('create.generate_loading') : t('create.generate_btn')}
               </button>
@@ -1537,8 +1769,8 @@ Your output MUST have exactly this JSON format:
                       }}
                       className={`cursor-pointer rounded-2xl border-2 p-4 text-center font-bold transition hover:shadow-sm ${
                         result.ausgewaehlter_titel === titel 
-                          ? 'bg-orange-100 border-orange-500 text-orange-800' 
-                          : 'bg-white border-slate-100 text-slate-700 hover:border-orange-200'
+                          ? 'bg-theme-primary-soft border-theme-primary text-theme-primary-strong' 
+                          : 'bg-theme-card border-theme-border text-theme-muted-strong hover:border-theme-primary-border'
                       }`}
                     >
                       {titel}
@@ -1546,8 +1778,8 @@ Your output MUST have exactly this JSON format:
                   ))}
                 </section>
                 
-                <section className="rounded-[40px] bg-white p-8 shadow-md border-2 border-slate-100">
-                  <h2 className="mb-6 text-2xl font-bold text-slate-800">Story Kurzskript</h2>
+                <section className="rounded-[40px] bg-theme-card p-8 shadow-md border-2 border-theme-border">
+                  <h2 className="mb-6 text-2xl font-bold text-theme-base">Story Kurzskript</h2>
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                     <div className="rounded-3xl bg-yellow-50 p-6 border border-yellow-100">
                       <h3 className="text-xs font-bold uppercase tracking-widest text-yellow-600 mb-2">Anfang</h3>
@@ -1591,7 +1823,7 @@ Your output MUST have exactly this JSON format:
                       <p className="mt-2 text-sm text-green-900 italic">{result.hauptcharakter.aussehen_de}</p>
                     </div>
                     <div className="flex flex-col items-center gap-4">
-                      <div id="characterImagePlaceholder" className="flex-none w-48 h-48 rounded-2xl bg-white flex items-center justify-center text-slate-400 border-dashed border-4 border-slate-200 overflow-hidden">
+                      <div id="characterImagePlaceholder" className="flex-none w-48 h-48 rounded-2xl bg-theme-card flex items-center justify-center text-theme-muted-light border-dashed border-4 border-theme-border-strong overflow-hidden">
                         {isImageLoading ? (
                           <div className="flex flex-col items-center">
                             <div className="animate-spin text-4xl mb-2">⏳</div>
@@ -1607,7 +1839,7 @@ Your output MUST have exactly this JSON format:
                                 setResult({...result, hauptcharakter: {...result.hauptcharakter, avatar_url: newAvatarUrl}});
                               }
                             }} 
-                            className="text-xs text-center p-2 cursor-pointer hover:text-orange-500 font-bold"
+                            className="text-xs text-center p-2 cursor-pointer hover:text-theme-primary font-bold"
                           >
                             Charakterbild generieren
                           </button>
@@ -1623,10 +1855,37 @@ Your output MUST have exactly this JSON format:
                             }
                           }}
                           disabled={isImageLoading}
-                          className="w-full max-w-48 rounded-full bg-white border border-slate-200 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors shadow-sm cursor-pointer disabled:opacity-50"
+                          className="w-full max-w-48 rounded-full bg-theme-card border border-theme-border-strong py-2 text-xs font-bold text-theme-muted hover:bg-theme-bg-soft transition-colors shadow-sm cursor-pointer disabled:opacity-50"
                         >
                           {isImageLoading ? "🔄 Generiere..." : "🔄 Bild neu generieren"}
                         </button>
+                      )}
+                      {result.hauptcharakter.avatar_url && (
+                        savingAvatarRef?.id === result.id ? (
+                          <div className="w-full max-w-48 bg-theme-card border border-theme-border p-3 rounded-[24px] shadow-sm flex flex-col gap-2 mt-2">
+                            <input 
+                              type="text" 
+                              placeholder="Name für Galerie..." 
+                              value={newAvatarName}
+                              onChange={e => setNewAvatarName(e.target.value)}
+                              className="text-xs p-2 bg-theme-bg-soft rounded-lg focus:outline-none"
+                            />
+                            <div className="flex gap-2">
+                              <button onClick={() => setSavingAvatarRef(null)} className="flex-1 text-[10px] py-1 bg-theme-bg-soft text-theme-muted rounded hover:bg-theme-bg-mute cursor-pointer">Abbrechen</button>
+                              <button disabled={isAvatarSaving || !newAvatarName} onClick={handleSaveAvatar} className="flex-1 text-[10px] py-1 bg-emerald-500 text-white font-bold rounded shadow hover:bg-emerald-600 disabled:opacity-50 cursor-pointer">{isAvatarSaving ? '...' : 'Speichern'}</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button 
+                            onClick={() => {
+                              setSavingAvatarRef(result);
+                              setNewAvatarName(result.hauptcharakter.name || '');
+                            }}
+                            className="mt-2 w-full max-w-48 rounded-full bg-theme-primary/10 border border-theme-primary-soft py-2 text-xs font-bold text-theme-primary-strong hover:bg-theme-primary/20 transition-colors shadow-sm cursor-pointer"
+                          >
+                            ⭐ In Helden-Galerie speichern
+                          </button>
+                        )
                       )}
                     </div>
                   </div>
@@ -1651,11 +1910,11 @@ Your output MUST have exactly this JSON format:
               </button>
             )}
             {allBooks.map(book => (
-              <div key={book.id} className="relative rounded-[30px] bg-white p-6 shadow-sm border border-slate-100 flex flex-col gap-4">
+              <div key={book.id} className="relative rounded-[30px] bg-theme-card p-6 shadow-sm border border-theme-border flex flex-col gap-4">
                 <input type="checkbox" onChange={() => handleToggleSelectBook(book.id)} checked={selectedBooks.has(book.id)} className="absolute top-4 left-4" />
-                <img src={book.hauptcharakter.avatar_url || ''} alt="" onClick={() => setEditingBook(book)} className="w-full h-40 object-cover rounded-2xl bg-slate-100 cursor-pointer" />
+                <img src={book.hauptcharakter.avatar_url || ''} alt="" onClick={() => setEditingBook(book)} className="w-full h-40 object-cover rounded-2xl bg-theme-bg-softer cursor-pointer" />
                 <h3 className="font-bold text-lg">{book.ausgewaehlter_titel || t('library.untitled')}</h3>
-                <div className="flex justify-between items-center text-sm font-bold text-slate-500">
+                <div className="flex justify-between items-center text-sm font-bold text-theme-muted">
                   <span>{book.created_at ? new Date(book.created_at.seconds * 1000).toLocaleDateString() : t('library.unknown_date')}</span>
                   {currentUser?.email === ADMIN_EMAIL && book.cost_metrics && <span>💰 ${book.cost_metrics.total_cost_usd.toFixed(2)}</span>}
                 </div>
@@ -1668,7 +1927,7 @@ Your output MUST have exactly this JSON format:
                   </button>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => setEditingBook(book)} className="flex-1 bg-slate-100 text-slate-700 py-2 rounded-full font-bold hover:bg-slate-200 cursor-pointer transition-colors">{t('library.edit')}</button>
+                  <button onClick={() => setEditingBook(book)} className="flex-1 bg-theme-bg-softer text-theme-muted-strong py-2 rounded-full font-bold hover:bg-theme-bg-mute cursor-pointer transition-colors">{t('library.edit')}</button>
                   <button onClick={(e) => { e.stopPropagation(); handleDeleteBook(book.id); }} className="bg-red-50 text-red-500 py-2 px-4 rounded-full font-bold relative z-20 cursor-pointer hover:bg-red-100 transition-colors">🗑️</button>
                 </div>
               </div>
@@ -1676,8 +1935,8 @@ Your output MUST have exactly this JSON format:
           </div>
         ) : activeTab === 'books' ? (
           <div className="flex flex-col gap-6">
-            <div className="flex justify-between items-center bg-white p-4 rounded-[24px] shadow-sm border border-slate-100 flex-wrap gap-4">
-              <label className="flex items-center gap-3 font-bold text-slate-700 cursor-pointer">
+            <div className="flex justify-between items-center bg-theme-card p-4 rounded-[24px] shadow-sm border border-theme-border flex-wrap gap-4">
+              <label className="flex items-center gap-3 font-bold text-theme-muted-strong cursor-pointer">
                 <input 
                   type="checkbox" 
                   checked={showOnlyFavorites} 
@@ -1690,8 +1949,8 @@ Your output MUST have exactly this JSON format:
                 const activeCfg = customLabels.find(l => l.id === activeLabelFilter);
                 return (
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-slate-500 font-medium">{t('book.filter')}</span>
-                    <span className={`text-sm font-bold px-3 py-1 rounded-full flex items-center gap-2 shadow-sm ${activeCfg?.colorClass || 'bg-slate-100 text-slate-800'}`}>
+                    <span className="text-sm text-theme-muted font-medium">{t('book.filter')}</span>
+                    <span className={`text-sm font-bold px-3 py-1 rounded-full flex items-center gap-2 shadow-sm ${activeCfg?.colorClass || 'bg-theme-bg-softer text-theme-base'}`}>
                       {activeCfg?.name || activeLabelFilter}
                       <button 
                         onClick={() => setActiveLabelFilter(null)}
@@ -1705,7 +1964,7 @@ Your output MUST have exactly this JSON format:
               })()}
               <button 
                 onClick={() => setIsEditingLabels(true)}
-                className="text-sm font-medium text-slate-500 hover:text-indigo-600 bg-slate-50 hover:bg-indigo-50 px-3 py-1.5 rounded-full transition-colors flex items-center gap-2"
+                className="text-sm font-medium text-theme-muted hover:text-indigo-600 bg-theme-bg-soft hover:bg-indigo-50 px-3 py-1.5 rounded-full transition-colors flex items-center gap-2"
               >
                 {t('book.adjust_labels')}
               </button>
@@ -1713,29 +1972,29 @@ Your output MUST have exactly this JSON format:
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {filteredFinishedBooks.length === 0 && (
-                <p className="text-slate-500 col-span-2 text-center py-12">{showOnlyFavorites ? t('book.no_favorites_found') : t('book.no_books_found')}</p>
+                <p className="text-theme-muted col-span-2 text-center py-12">{showOnlyFavorites ? t('book.no_favorites_found') : t('book.no_books_found')}</p>
               )}
               {filteredFinishedBooks.map(book => (
-                <div key={book.id} className="relative rounded-[30px] bg-white p-6 shadow-sm border border-slate-100 flex flex-col gap-4 cursor-pointer hover:shadow-md transition-shadow" onClick={() => setReadingBook(book)}>
+                <div key={book.id} className="relative rounded-[30px] bg-theme-card p-6 shadow-sm border border-theme-border flex flex-col gap-4 cursor-pointer hover:shadow-md transition-shadow" onClick={() => setReadingBook(book)}>
                   <button 
                     onClick={(e) => handleToggleFavorite(e, book)} 
-                    className="absolute top-8 right-8 z-10 w-10 h-10 bg-white/80 backdrop-blur-md rounded-full flex items-center justify-center text-xl shadow-sm hover:scale-110 transition-transform cursor-pointer"
+                    className="absolute top-8 right-8 z-10 w-10 h-10 bg-theme-card/80 backdrop-blur-md rounded-full flex items-center justify-center text-xl shadow-sm hover:scale-110 transition-transform cursor-pointer"
                   >
                     {book.isFavorite ? '❤️' : '🤍'}
                   </button>
                   <button 
                     onClick={(e) => { e.stopPropagation(); setShowDeleteFinishedConfirm(book.id); }} 
-                    className="absolute top-8 left-8 z-10 w-10 h-10 bg-white/80 backdrop-blur-md rounded-full flex items-center justify-center text-xl shadow-sm hover:scale-110 hover:bg-red-50 transition-all cursor-pointer"
+                    className="absolute top-8 left-8 z-10 w-10 h-10 bg-theme-card/80 backdrop-blur-md rounded-full flex items-center justify-center text-xl shadow-sm hover:scale-110 hover:bg-red-50 transition-all cursor-pointer"
                     title="Buch löschen"
                   >
                     🗑️
                   </button>
                   <img src={book.coverImage || ''} alt="Cover" className="w-full h-48 object-cover rounded-2xl bg-amber-50" />
-                  <h3 className="font-bold text-xl text-slate-800">{book.titel}</h3>
+                  <h3 className="font-bold text-xl text-theme-base">{book.titel}</h3>
                   <div className="flex flex-wrap gap-2 items-center">
                     <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-2 py-1 rounded-md">{getTranslatedLabel('zielalter', book.zielalter)}</span>
                     <span className="bg-pink-100 text-pink-800 text-xs font-bold px-2 py-1 rounded-md">{getTranslatedLabel('stimmung', book.stimmung)}</span>
-                    <span className="bg-slate-100 text-slate-600 text-xs font-bold px-2 py-1 rounded-md">{book.seitenAnzahl} {t('book.pages_suffix')}</span>
+                    <span className="bg-theme-bg-softer text-theme-muted text-xs font-bold px-2 py-1 rounded-md">{book.seitenAnzahl} {t('book.pages_suffix')}</span>
                     {currentUser?.email === ADMIN_EMAIL && book.kosten_protokoll && (
                       <div className="relative group ml-1">
                         <div className="text-xs bg-emerald-100 text-emerald-800 font-bold px-2 py-1 rounded-md cursor-help">
@@ -1764,7 +2023,7 @@ Your output MUST have exactly this JSON format:
                     )}
                   </div>
                   <div className="flex items-center gap-2 mt-2 pt-4 border-t border-slate-50">
-                    <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Label:</span>
+                    <span className="text-xs text-theme-muted-light font-bold uppercase tracking-wider">Label:</span>
                     <div className="flex gap-2">
                       {customLabels.map(l => {
                         const isActive = book.labelId === l.id;
@@ -1773,7 +2032,7 @@ Your output MUST have exactly this JSON format:
                             key={l.id}
                             onClick={(e) => { e.stopPropagation(); handleSetLabel(book, l.id); }}
                             title={l.name}
-                            className={`w-6 h-6 rounded-full transition-all border-2 ${isActive ? l.colorClass + ' border-transparent scale-110 shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                            className={`w-6 h-6 rounded-full transition-all border-2 ${isActive ? l.colorClass + ' border-transparent scale-110 shadow-sm' : 'border-theme-border-strong bg-theme-card hover:border-slate-300'}`}
                           />
                         );
                       })}
@@ -1800,14 +2059,14 @@ Your output MUST have exactly this JSON format:
       {/* Book Generation Loading Overlay */}
       {isGeneratingBook && (
         <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-indigo-900/90 backdrop-blur-md p-8 text-center">
-            <div className="w-24 h-24 bg-white/20 rounded-full flex items-center justify-center animate-bounce mb-8 shadow-2xl">
+            <div className="w-24 h-24 bg-theme-card/20 rounded-full flex items-center justify-center animate-bounce mb-8 shadow-2xl">
               <span className="text-5xl">📖</span>
             </div>
             <h2 className="text-3xl font-bold text-white mb-4">{generationStep}</h2>
             <div className="flex gap-2">
-              <div className="w-3 h-3 bg-white rounded-full animate-bounce delay-75"></div>
-              <div className="w-3 h-3 bg-white rounded-full animate-bounce delay-150"></div>
-              <div className="w-3 h-3 bg-white rounded-full animate-bounce delay-300"></div>
+              <div className="w-3 h-3 bg-theme-card rounded-full animate-bounce delay-75"></div>
+              <div className="w-3 h-3 bg-theme-card rounded-full animate-bounce delay-150"></div>
+              <div className="w-3 h-3 bg-theme-card rounded-full animate-bounce delay-300"></div>
             </div>
             <p className="mt-8 text-indigo-200 text-sm italic">"{t('create.patience_hint')}"</p>
         </div>
@@ -1816,8 +2075,8 @@ Your output MUST have exactly this JSON format:
       {/* Configurator Modal */}
       {selectedSkriptForBook && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg rounded-[32px] bg-white p-8 shadow-2xl">
-            <h3 className="mb-6 text-2xl font-bold text-slate-800">{t('create.config_title')}</h3>
+          <div className="w-full max-w-lg rounded-[32px] bg-theme-card p-8 shadow-2xl">
+            <h3 className="mb-6 text-2xl font-bold text-theme-base">{t('create.config_title')}</h3>
             
             {error && (
               <div className="mb-6 rounded-2xl bg-red-100 p-4 text-red-800 border border-red-200 text-sm">
@@ -1827,13 +2086,13 @@ Your output MUST have exactly this JSON format:
 
             <div className="space-y-6">
               <div>
-                <label className="block text-sm font-bold text-slate-500 mb-3">{t('create.age_label')}</label>
+                <label className="block text-sm font-bold text-theme-muted mb-3">{t('create.age_label')}</label>
                 <div className="flex gap-2">
                   {['2-4 Jahre', '4-6 Jahre', '6-8 Jahre'].map(alter => (
                     <button 
                       key={alter}
                       onClick={() => setBookConfig({ ...bookConfig, zielalter: alter })}
-                      className={`flex-1 py-2 rounded-xl text-sm font-bold border-2 transition-colors cursor-pointer ${bookConfig.zielalter === alter ? 'border-orange-500 text-orange-600 bg-orange-50' : 'border-slate-100 text-slate-500 hover:border-slate-200'}`}
+                      className={`flex-1 py-2 rounded-xl text-sm font-bold border-2 transition-colors cursor-pointer ${bookConfig.zielalter === alter ? 'border-theme-primary text-theme-primary bg-theme-primary-softer' : 'border-theme-border text-theme-muted hover:border-theme-border-strong'}`}
                     >
                       {alter === '2-4 Jahre' ? t('create.age_2_4') : alter === '4-6 Jahre' ? t('create.age_4_6') : t('create.age_6_8')}
                     </button>
@@ -1842,13 +2101,13 @@ Your output MUST have exactly this JSON format:
               </div>
 
               <div>
-                <label className="block text-sm font-bold text-slate-500 mb-3">{t('create.mood_label')}</label>
+                <label className="block text-sm font-bold text-theme-muted mb-3">{t('create.mood_label')}</label>
                 <div className="flex flex-wrap gap-2">
                   {['Lustig', 'Träumerisch', 'Lehrreich', 'Spannend'].map(stimmung => (
                     <button 
                       key={stimmung}
                       onClick={() => setBookConfig({ ...bookConfig, stimmung })}
-                      className={`px-4 py-2 rounded-xl text-sm font-bold border-2 transition-colors cursor-pointer ${bookConfig.stimmung === stimmung ? 'border-indigo-500 text-indigo-600 bg-indigo-50' : 'border-slate-100 text-slate-500 hover:border-slate-200'}`}
+                      className={`px-4 py-2 rounded-xl text-sm font-bold border-2 transition-colors cursor-pointer ${bookConfig.stimmung === stimmung ? 'border-indigo-500 text-indigo-600 bg-indigo-50' : 'border-theme-border text-theme-muted hover:border-theme-border-strong'}`}
                     >
                       {stimmung === 'Lustig' ? t('create.mood_funny') : stimmung === 'Träumerisch' ? t('create.mood_dreamy') : stimmung === 'Lehrreich' ? t('create.mood_educational') : t('create.mood_exciting')}
                     </button>
@@ -1857,9 +2116,9 @@ Your output MUST have exactly this JSON format:
               </div>
 
               <div>
-                <label className="block text-sm font-bold text-slate-500 mb-3">{t('create.pages_label')}</label>
+                <label className="block text-sm font-bold text-theme-muted mb-3">{t('create.pages_label')}</label>
                 <select 
-                  className="w-full rounded-xl border-2 border-slate-100 p-3 font-bold text-slate-700 outline-none focus:border-slate-300"
+                  className="w-full rounded-xl border-2 border-theme-border p-3 font-bold text-theme-muted-strong outline-none focus:border-slate-300"
                   value={bookConfig.seitenAnzahl}
                   onChange={(e) => setBookConfig({ ...bookConfig, seitenAnzahl: parseInt(e.target.value) })}
                 >
@@ -1869,8 +2128,8 @@ Your output MUST have exactly this JSON format:
                 </select>
               </div>
 
-              <div className="flex gap-4 mt-8 pt-6 border-t border-slate-100">
-                <button onClick={() => setSelectedSkriptForBook(null)} className="flex-1 rounded-full bg-slate-100 py-3 font-bold text-slate-700 hover:bg-slate-200 cursor-pointer">{t('common.cancel')}</button>
+              <div className="flex gap-4 mt-8 pt-6 border-t border-theme-border">
+                <button onClick={() => setSelectedSkriptForBook(null)} className="flex-1 rounded-full bg-theme-bg-softer py-3 font-bold text-theme-muted-strong hover:bg-theme-bg-mute cursor-pointer">{t('common.cancel')}</button>
                 <button 
                   onClick={handleGenerateBook} 
                   disabled={isGeneratingBook}
@@ -1888,11 +2147,11 @@ Your output MUST have exactly this JSON format:
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-          <div className="w-full max-w-sm rounded-[32px] bg-white p-8 shadow-2xl">
-            <h3 className="mb-4 text-2xl font-bold text-slate-800">{t('common.confirm_delete_title')}</h3>
-            <p className="mb-8 text-slate-600">{t('common.confirm_delete_desc')}</p>
+          <div className="w-full max-w-sm rounded-[32px] bg-theme-card p-8 shadow-2xl">
+            <h3 className="mb-4 text-2xl font-bold text-theme-base">{t('common.confirm_delete_title')}</h3>
+            <p className="mb-8 text-theme-muted">{t('common.confirm_delete_desc')}</p>
             <div className="flex gap-4">
-              <button onClick={() => setShowDeleteConfirm(null)} className="flex-1 rounded-full bg-slate-100 py-3 font-bold text-slate-700 hover:bg-slate-200 cursor-pointer">{t('common.cancel')}</button>
+              <button onClick={() => setShowDeleteConfirm(null)} className="flex-1 rounded-full bg-theme-bg-softer py-3 font-bold text-theme-muted-strong hover:bg-theme-bg-mute cursor-pointer">{t('common.cancel')}</button>
               <button onClick={confirmDelete} className="flex-1 rounded-full bg-red-500 py-3 font-bold text-white shadow-[0_4px_0_rgb(153,27,27)] hover:bg-red-600 active:translate-y-1 active:shadow-none cursor-pointer">{t('common.delete')}</button>
             </div>
           </div>
@@ -1902,13 +2161,13 @@ Your output MUST have exactly this JSON format:
       {/* Delete Finished Book Confirmation Modal */}
       {showDeleteFinishedConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-          <div className="w-full max-w-sm rounded-[32px] bg-white p-8 shadow-2xl">
-            <h3 className="mb-4 text-2xl font-bold text-slate-800">{t('common.confirm_delete_title')}</h3>
-            <p className="mb-8 text-slate-600">{t('common.confirm_delete_book_desc')}</p>
+          <div className="w-full max-w-sm rounded-[32px] bg-theme-card p-8 shadow-2xl">
+            <h3 className="mb-4 text-2xl font-bold text-theme-base">{t('common.confirm_delete_title')}</h3>
+            <p className="mb-8 text-theme-muted">{t('common.confirm_delete_book_desc')}</p>
             <div className="flex gap-4">
               <button 
                 onClick={() => setShowDeleteFinishedConfirm(null)} 
-                className="flex-1 rounded-full bg-slate-100 py-3 font-bold text-slate-700 hover:bg-slate-200 cursor-pointer transition-colors"
+                className="flex-1 rounded-full bg-theme-bg-softer py-3 font-bold text-theme-muted-strong hover:bg-theme-bg-mute cursor-pointer transition-colors"
               >
                 {t('common.cancel')}
               </button>
@@ -1926,17 +2185,17 @@ Your output MUST have exactly this JSON format:
       {/* Edit Modal */}
       {editingBook && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="w-full max-w-4xl rounded-[40px] bg-white p-8 shadow-2xl my-8 max-h-[90vh] overflow-y-auto">
-            <h3 className="mb-6 text-3xl font-bold text-slate-800">📖 Kurzskript bearbeiten</h3>
+          <div className="w-full max-w-4xl rounded-[40px] bg-theme-card p-8 shadow-2xl my-8 max-h-[90vh] overflow-y-auto">
+            <h3 className="mb-6 text-3xl font-bold text-theme-base">📖 Kurzskript bearbeiten</h3>
             
             <div className="space-y-6">
               <div>
-                <label className="block text-sm font-bold text-slate-500 mb-2 uppercase tracking-widest">Titel</label>
+                <label className="block text-sm font-bold text-theme-muted mb-2 uppercase tracking-widest">Titel</label>
                 <input 
                   type="text" 
                   value={editingBook.ausgewaehlter_titel || editingBook.titel_optionen[0] || ""}
                   onChange={(e) => setEditingBook({...editingBook, ausgewaehlter_titel: e.target.value})}
-                  className="w-full rounded-2xl bg-slate-50 border-2 border-slate-100 p-4 font-bold text-slate-800 text-xl focus:outline-none focus:border-orange-300 transition-colors"
+                  className="w-full rounded-2xl bg-theme-bg-soft border-2 border-theme-border p-4 font-bold text-theme-base text-xl focus:outline-none focus:border-theme-primary transition-colors"
                 />
               </div>
 
@@ -1970,8 +2229,8 @@ Your output MUST have exactly this JSON format:
                 </div>
               </div>
 
-              <div className="flex flex-col items-center gap-4 bg-slate-50 p-6 rounded-[30px] border border-slate-100">
-                <h4 className="font-bold text-slate-500 uppercase tracking-widest text-xs">Charakter Avatar</h4>
+              <div className="flex flex-col items-center gap-4 bg-theme-bg-soft p-6 rounded-[30px] border border-theme-border">
+                <h4 className="font-bold text-theme-muted uppercase tracking-widest text-xs">Charakter Avatar</h4>
                 {editingBook.hauptcharakter.avatar_url ? (
                   <img 
                     src={editingBook.hauptcharakter.avatar_url} 
@@ -1979,7 +2238,7 @@ Your output MUST have exactly this JSON format:
                     className="w-48 h-48 object-cover rounded-[24px] shadow-sm mb-2"
                   />
                 ) : (
-                  <div className="w-48 h-48 bg-slate-200 rounded-[24px] flex items-center justify-center mb-2">
+                  <div className="w-48 h-48 bg-theme-bg-mute rounded-[24px] flex items-center justify-center mb-2">
                     <span className="text-4xl">📸</span>
                   </div>
                 )}
@@ -1991,23 +2250,50 @@ Your output MUST have exactly this JSON format:
                     }
                   }}
                   disabled={isImageLoading}
-                  className="w-full md:w-auto px-8 rounded-full bg-slate-200 py-3 font-bold text-slate-700 hover:bg-slate-300 transition-colors disabled:opacity-50 cursor-pointer"
+                  className="w-full md:w-auto px-8 rounded-full bg-theme-bg-mute py-3 font-bold text-theme-muted-strong hover:bg-slate-300 transition-colors disabled:opacity-50 cursor-pointer"
                 >
                   {isImageLoading ? "🔄 Generiere..." : "🔄 Bild neu generieren"}
                 </button>
+                {editingBook.hauptcharakter.avatar_url && (
+                  savingAvatarRef?.id === editingBook.id ? (
+                    <div className="w-full md:w-48 bg-theme-card border border-theme-border p-3 rounded-[24px] shadow-sm flex flex-col gap-2 mt-2">
+                       <input 
+                         type="text" 
+                         placeholder="Name für Galerie..." 
+                         value={newAvatarName}
+                         onChange={e => setNewAvatarName(e.target.value)}
+                         className="text-xs p-2 bg-theme-bg-soft rounded-lg focus:outline-none w-full"
+                       />
+                       <div className="flex gap-2">
+                         <button onClick={() => setSavingAvatarRef(null)} className="flex-1 text-[10px] py-1 bg-theme-bg-soft text-theme-muted rounded hover:bg-theme-bg-mute cursor-pointer">Abbrechen</button>
+                         <button disabled={isAvatarSaving || !newAvatarName} onClick={handleSaveAvatar} className="flex-1 text-[10px] py-1 bg-emerald-500 text-white font-bold rounded shadow hover:bg-emerald-600 disabled:opacity-50 cursor-pointer">{isAvatarSaving ? '...' : 'Speichern'}</button>
+                       </div>
+                    </div>
+                  ) : (
+                    <button 
+                      onClick={() => {
+                        setSavingAvatarRef(editingBook);
+                        setNewAvatarName(editingBook.hauptcharakter.name || '');
+                      }}
+                       className="w-full md:w-auto px-6 rounded-full bg-theme-primary/10 border border-theme-primary-soft py-3 font-bold text-theme-primary-strong hover:bg-theme-primary/20 transition-colors shadow-sm cursor-pointer"
+                    >
+                      ⭐ In Helden-Galerie speichern
+                    </button>
+                  )
+                )}
               </div>
             </div>
 
-            <div className="flex flex-col md:flex-row gap-4 mt-8 pt-6 border-t border-slate-100">
+            <div className="flex flex-col md:flex-row gap-4 mt-8 pt-6 border-t border-theme-border">
               <button 
                 onClick={() => setEditingBook(null)} 
-                className="flex-1 rounded-full bg-slate-100 py-4 font-bold text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+                className="flex-1 rounded-full bg-theme-bg-softer py-4 font-bold text-theme-muted-strong hover:bg-theme-bg-mute transition-colors cursor-pointer"
               >
                 Abbrechen
               </button>
               <button 
                 onClick={() => handleUpdateBook(editingBook)} 
-                className="flex-1 rounded-full bg-orange-100 py-4 font-bold text-orange-700 hover:bg-orange-200 transition-colors cursor-pointer"
+                className="flex-1 rounded-full bg-theme-primary-soft py-4 font-bold text-theme-primary-strong hover:bg-theme-primary-border transition-colors cursor-pointer"
               >
                 💾 Speichern
               </button>
@@ -2108,7 +2394,7 @@ Your output MUST have exactly this JSON format:
                            {seite.imageUrl ? (
                               <img src={seite.imageUrl} alt={`Seite ${idx + 1}`} className="w-full h-full object-cover" loading="lazy" />
                             ) : (
-                               <div className="flex flex-col items-center justify-center h-full w-full bg-slate-100 text-slate-500 p-6 text-center italic">
+                               <div className="flex flex-col items-center justify-center h-full w-full bg-theme-bg-softer text-theme-muted p-6 text-center italic">
                                   "{seite.imagePrompt}"
                                </div>
                             )}
@@ -2125,11 +2411,11 @@ Your output MUST have exactly this JSON format:
                         className="absolute w-full h-[85%] px-4 md:px-8 flex flex-col transition-transform duration-300 ease-in-out"
                         style={{ transform: `translateX(${translatePercent}%)`, opacity: isActive ? 1 : 0.3 }}
                       >
-                         <div className="flex-1 bg-[#fdf9f0] text-slate-800 rounded-[32px] p-8 md:p-16 shadow-2xl flex flex-col justify-center items-center relative border border-orange-100/50">
+                         <div className="flex-1 bg-[#fdf9f0] text-theme-base rounded-[32px] p-8 md:p-16 shadow-2xl flex flex-col justify-center items-center relative border border-theme-primary-soft/50">
                             {editingPageIdx === idx ? (
                                 <>
                                   <textarea 
-                                    className="bg-white/50 text-slate-800 p-6 rounded-2xl w-full flex-1 focus:outline-none resize-none text-xl md:text-2xl font-serif text-center"
+                                    className="bg-theme-card/50 text-theme-base p-6 rounded-2xl w-full flex-1 focus:outline-none resize-none text-xl md:text-2xl font-serif text-center"
                                     value={editingText}
                                     onChange={(e) => setEditingText(e.target.value)}
                                   />
@@ -2137,16 +2423,16 @@ Your output MUST have exactly this JSON format:
                                 </>
                             ) : (
                                 <>
-                                   <p className={`font-serif text-center leading-[1.6] text-slate-800 ${seite.text.length < 150 ? 'text-2xl md:text-3xl lg:text-4xl' : (seite.text.length < 250 ? 'text-xl md:text-2xl lg:text-3xl' : 'text-base md:text-lg lg:text-xl')}`}>{seite.text}</p>
+                                   <p className={`font-serif text-center leading-[1.6] text-theme-base ${seite.text.length < 150 ? 'text-2xl md:text-3xl lg:text-4xl' : (seite.text.length < 250 ? 'text-xl md:text-2xl lg:text-3xl' : 'text-base md:text-lg lg:text-xl')}`}>{seite.text}</p>
                                    <button 
-                                      className="absolute top-6 right-6 bg-orange-100 text-orange-600 rounded-full w-10 h-10 flex items-center justify-center hover:bg-orange-200 transition cursor-pointer"
+                                      className="absolute top-6 right-6 bg-theme-primary-soft text-theme-primary rounded-full w-10 h-10 flex items-center justify-center hover:bg-theme-primary-border transition cursor-pointer"
                                       onClick={() => { setEditingPageIdx(idx); setEditingText(seite.text); }}
                                     >
                                       ✏️
                                     </button>
                                 </>
                             )}
-                            <p className="absolute bottom-6 text-xs text-slate-400 font-bold">{idx + 1} / {readingBook.seiten.length}</p>
+                            <p className="absolute bottom-6 text-xs text-theme-muted-light font-bold">{idx + 1} / {readingBook.seiten.length}</p>
                          </div>
                       </div>
                     )
@@ -2159,13 +2445,13 @@ Your output MUST have exactly this JSON format:
                     className="absolute w-full h-[85%] px-4 md:px-8 flex flex-col transition-transform duration-300 ease-in-out overflow-hidden"
                     style={{ transform: `translateX(${translatePercent}%)`, opacity: isActive ? 1 : 0.3 }}
                   >
-                    <div className="flex-[6] bg-white rounded-t-[32px] overflow-hidden flex items-center justify-center relative shadow-md">
+                    <div className="flex-[6] bg-theme-card rounded-t-[32px] overflow-hidden flex items-center justify-center relative shadow-md">
                       {isGeneratingBook ? (
-                        <div className="bg-slate-100 w-full h-full flex items-center justify-center animate-pulse text-4xl">🎨</div>
+                        <div className="bg-theme-bg-softer w-full h-full flex items-center justify-center animate-pulse text-4xl">🎨</div>
                       ) : seite.imageUrl ? (
                         <img src={seite.imageUrl} alt={`Seite ${idx + 1}`} className="w-full h-full object-cover" loading="lazy" />
                       ) : (
-                         <div className="bg-slate-50 w-full h-full flex items-center justify-center text-slate-300 text-4xl border-2 border-dashed border-slate-200">🖼️</div>
+                         <div className="bg-theme-bg-soft w-full h-full flex items-center justify-center text-slate-300 text-4xl border-2 border-dashed border-theme-border-strong">🖼️</div>
                       )}
                     </div>
                     <div className="flex-[4] overflow-y-auto bg-slate-800 rounded-b-[32px] p-6 shadow-2xl z-10 border-t-4 border-slate-900 leading-relaxed flex flex-col relative text-white">
@@ -2194,7 +2480,7 @@ Your output MUST have exactly this JSON format:
                           </button>
                         </>
                       )}
-                      <p className="text-right text-xs text-slate-500 mt-2">{idx + 1} / {readingBook.seiten.length}</p>
+                      <p className="text-right text-xs text-theme-muted mt-2">{idx + 1} / {readingBook.seiten.length}</p>
                     </div>
                   </div>
                 );
@@ -2207,8 +2493,8 @@ Your output MUST have exactly this JSON format:
       {/* Backup Manager Modal */}
       {isBackupManagerOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-[40px] p-8 w-full max-w-lg shadow-2xl relative">
-            <h2 className="text-3xl font-bold text-slate-800 mb-6 flex items-center gap-3">
+          <div className="bg-theme-card rounded-[40px] p-8 w-full max-w-lg shadow-2xl relative">
+            <h2 className="text-3xl font-bold text-theme-base mb-6 flex items-center gap-3">
               ☁️ Backup-Manager
             </h2>
             
@@ -2219,7 +2505,7 @@ Your output MUST have exactly this JSON format:
                   <button 
                     onClick={handleDownloadBackup}
                     disabled={isBackupLoading}
-                    className="flex-1 bg-white text-indigo-700 py-3 rounded-full font-bold shadow-sm hover:shadow-md transition-all sm:text-sm cursor-pointer disabled:opacity-50"
+                    className="flex-1 bg-theme-card text-indigo-700 py-3 rounded-full font-bold shadow-sm hover:shadow-md transition-all sm:text-sm cursor-pointer disabled:opacity-50"
                   >
                     📥 Als .json exportieren
                   </button>
@@ -2236,19 +2522,19 @@ Your output MUST have exactly this JSON format:
                 </div>
               </div>
               
-              <div className="bg-slate-50 border border-slate-100 rounded-[24px] p-6 space-y-4">
+              <div className="bg-theme-bg-soft border border-theme-border rounded-[24px] p-6 space-y-4">
                 <div className="flex justify-between items-center">
-                  <h3 className="font-bold text-slate-800 text-lg">Automatische Backups</h3>
+                  <h3 className="font-bold text-theme-base text-lg">Automatische Backups</h3>
                   <span className="bg-green-100 text-green-800 text-[10px] uppercase tracking-wider font-bold px-2 py-1 rounded-full">Täglich</span>
                 </div>
-                <p className="text-sm text-slate-500">
+                <p className="text-sm text-theme-muted">
                   Die App erstellt jeden Tag beim ersten Start automatisch ein Backup (letzte 7 Tage).
                 </p>
                 {autoBackups.length > 0 ? (
                   <div className="space-y-2 max-h-[180px] overflow-y-auto pr-2 scrollbar-hide">
                     {autoBackups.map((ab) => (
-                      <div key={ab.id || ab.dateString} className="flex justify-between items-center bg-white border border-slate-100 rounded-xl p-3 shadow-sm">
-                        <span className="font-bold text-slate-700">{new Date(ab.dateString).toLocaleDateString()}</span>
+                      <div key={ab.id || ab.dateString} className="flex justify-between items-center bg-theme-card border border-theme-border rounded-xl p-3 shadow-sm">
+                        <span className="font-bold text-theme-muted-strong">{new Date(ab.dateString).toLocaleDateString()}</span>
                         <button 
                           onClick={() => {
                             if(window.confirm("Bist du sicher? Dies fügt die Daten aus dem Backup zu den aktuellen hinzu (Merge). Das Überschreiben überschreibt nicht direkt, sondern fügt fehlende Daten hinzu.")) {
@@ -2264,19 +2550,19 @@ Your output MUST have exactly this JSON format:
                     ))}
                   </div>
                 ) : (
-                  <p className="text-sm text-slate-400 italic text-center p-4">Noch keine automatischen Backups vorhanden. Das erste wird heute erstellt!</p>
+                  <p className="text-sm text-theme-muted-light italic text-center p-4">Noch keine automatischen Backups vorhanden. Das erste wird heute erstellt!</p>
                 )}
               </div>
             </div>
             
             <button 
               onClick={() => setIsBackupManagerOpen(false)}
-              className="mt-8 w-full py-4 text-slate-500 font-bold hover:bg-slate-100 rounded-full transition-colors cursor-pointer"
+              className="mt-8 w-full py-4 text-theme-muted font-bold hover:bg-theme-bg-softer rounded-full transition-colors cursor-pointer"
             >
               Schließen
             </button>
             {isBackupLoading && (
-              <div className="absolute inset-0 bg-white/50 backdrop-blur-sm rounded-[40px] flex items-center justify-center">
+              <div className="absolute inset-0 bg-theme-card/50 backdrop-blur-sm rounded-[40px] flex items-center justify-center">
                  <div className="animate-spin text-4xl">⏳</div>
               </div>
             )}
@@ -2287,8 +2573,8 @@ Your output MUST have exactly this JSON format:
       {/* Label Edit Modal */}
       {isEditingLabels && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-[32px] p-8 w-full max-w-sm shadow-2xl relative">
-            <h2 className="text-2xl font-bold text-slate-800 mb-6">Labels anpassen</h2>
+          <div className="bg-theme-card rounded-[32px] p-8 w-full max-w-sm shadow-2xl relative">
+            <h2 className="text-2xl font-bold text-theme-base mb-6">Labels anpassen</h2>
             <div className="flex flex-col gap-4">
               {editingCustomLabels.map((l, i) => (
                 <div key={l.id} className="flex flex-col gap-1">
@@ -2301,7 +2587,7 @@ Your output MUST have exactly this JSON format:
                       newLabels[i].name = e.target.value;
                       setEditingCustomLabels(newLabels);
                     }}
-                    className={`w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-b-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-bold ${l.colorClass.split(' ')[1]}`}
+                    className={`w-full px-4 py-2 bg-theme-bg-soft border border-theme-border-strong rounded-b-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-bold ${l.colorClass.split(' ')[1]}`}
                     placeholder="Label Name..."
                   />
                 </div>
@@ -2313,7 +2599,7 @@ Your output MUST have exactly this JSON format:
                   setEditingCustomLabels([...customLabels]);
                   setIsEditingLabels(false);
                 }}
-                className="flex-1 py-3 text-slate-500 font-bold hover:bg-slate-100 rounded-xl transition cursor-pointer"
+                className="flex-1 py-3 text-theme-muted font-bold hover:bg-theme-bg-softer rounded-xl transition cursor-pointer"
               >
                 Abbrechen
               </button>
@@ -2337,33 +2623,36 @@ Your output MUST have exactly this JSON format:
       >
         <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setIsMobileMenuOpen(false)} />
         <div 
-          className={`absolute top-0 right-0 bottom-0 w-[280px] bg-white shadow-2xl transition-transform duration-300 ease-in-out transform flex flex-col ${isMobileMenuOpen ? 'translate-x-0' : 'translate-x-full'}`}
+          className={`absolute top-0 right-0 bottom-0 w-[280px] bg-theme-card shadow-2xl transition-transform duration-300 ease-in-out transform flex flex-col ${isMobileMenuOpen ? 'translate-x-0' : 'translate-x-full'}`}
         >
-          <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-orange-50/50">
-            <h2 className="font-magic text-orange-600 text-2xl tracking-normal">Fably</h2>
-            <button onClick={() => setIsMobileMenuOpen(false)} className="text-slate-500 text-2xl hover:text-slate-800 transition px-2">×</button>
+          <div className="p-6 border-b border-theme-border flex justify-between items-center bg-theme-primary-softer/50">
+            <h2 className="font-magic text-theme-primary text-2xl tracking-normal">Fably</h2>
+            <button onClick={() => setIsMobileMenuOpen(false)} className="text-theme-muted text-2xl hover:text-theme-base transition px-2">×</button>
           </div>
           <div className="flex flex-col gap-2 p-4 flex-1 overflow-y-auto">
-            <button onClick={() => { setActiveTab('create'); setIsMobileMenuOpen(false); }} className={`p-4 font-bold rounded-2xl flex items-center gap-3 transition-colors text-left ${activeTab === 'create' ? 'bg-orange-100 text-orange-700' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}>
+            <button onClick={() => { setActiveTab('create'); setIsMobileMenuOpen(false); }} className={`p-4 font-bold rounded-2xl flex items-center gap-3 transition-colors text-left ${activeTab === 'create' ? 'bg-theme-primary-soft text-theme-primary-strong' : 'bg-theme-bg-soft text-theme-muted hover:bg-theme-bg-softer'}`}>
               <span className="text-xl">📖</span> Neue Geschichte
             </button>
-            <button onClick={() => { setActiveTab('library'); setIsMobileMenuOpen(false); }} className={`p-4 font-bold rounded-2xl flex items-center gap-3 transition-colors text-left ${activeTab === 'library' ? 'bg-orange-100 text-orange-700' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}>
-              <span className="text-xl">📜</span> Meine Kurzskripte <span className="ml-auto bg-white/50 px-2 py-0.5 rounded-full text-xs">{allBooks.length}</span>
+            <button onClick={() => { setActiveTab('avatars'); setIsMobileMenuOpen(false); }} className={`p-4 font-bold rounded-2xl flex items-center gap-3 transition-colors text-left ${activeTab === 'avatars' ? 'bg-theme-primary-soft text-theme-primary-strong' : 'bg-theme-bg-soft text-theme-muted hover:bg-theme-bg-softer'}`}>
+              <span className="text-xl">🦸</span> Helden-Galerie
             </button>
-            <button onClick={() => { setActiveTab('books'); setIsMobileMenuOpen(false); }} className={`p-4 font-bold rounded-2xl flex items-center gap-3 transition-colors text-left ${activeTab === 'books' ? 'bg-orange-100 text-orange-700' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}>
-              <span className="text-xl">📚</span> Bücher <span className="ml-auto bg-white/50 px-2 py-0.5 rounded-full text-xs">{allFinishedBooks.length}</span>
+            <button onClick={() => { setActiveTab('library'); setIsMobileMenuOpen(false); }} className={`p-4 font-bold rounded-2xl flex items-center gap-3 transition-colors text-left ${activeTab === 'library' ? 'bg-theme-primary-soft text-theme-primary-strong' : 'bg-theme-bg-soft text-theme-muted hover:bg-theme-bg-softer'}`}>
+              <span className="text-xl">📜</span> Meine Kurzskripte <span className="ml-auto bg-theme-card/50 px-2 py-0.5 rounded-full text-xs">{allBooks.length}</span>
+            </button>
+            <button onClick={() => { setActiveTab('books'); setIsMobileMenuOpen(false); }} className={`p-4 font-bold rounded-2xl flex items-center gap-3 transition-colors text-left ${activeTab === 'books' ? 'bg-theme-primary-soft text-theme-primary-strong' : 'bg-theme-bg-soft text-theme-muted hover:bg-theme-bg-softer'}`}>
+              <span className="text-xl">📚</span> Bücher <span className="ml-auto bg-theme-card/50 px-2 py-0.5 rounded-full text-xs">{allFinishedBooks.length}</span>
             </button>
             
-            <div className="h-px bg-slate-100 my-2" />
+            <div className="h-px bg-theme-bg-softer my-2" />
             
-            <button onClick={() => { setIsEditingLabels(true); setIsMobileMenuOpen(false); }} className="p-4 font-bold rounded-2xl flex items-center gap-3 bg-slate-50 text-slate-600 hover:bg-slate-100 transition-colors text-left">
+            <button onClick={() => { setIsEditingLabels(true); setIsMobileMenuOpen(false); }} className="p-4 font-bold rounded-2xl flex items-center gap-3 bg-theme-bg-soft text-theme-muted hover:bg-theme-bg-softer transition-colors text-left">
               <span className="text-xl">🏷️</span> Label-Verwaltung
             </button>
-            <button onClick={() => { setIsBackupManagerOpen(true); setIsMobileMenuOpen(false); }} className="p-4 font-bold rounded-2xl flex items-center gap-3 bg-slate-50 text-slate-600 hover:bg-slate-100 transition-colors text-left">
+            <button onClick={() => { setIsBackupManagerOpen(true); setIsMobileMenuOpen(false); }} className="p-4 font-bold rounded-2xl flex items-center gap-3 bg-theme-bg-soft text-theme-muted hover:bg-theme-bg-softer transition-colors text-left">
               <span className="text-xl">💾</span> Backup-Manager
             </button>
           </div>
-          <div className="p-4 border-t border-slate-100">
+          <div className="p-4 border-t border-theme-border">
             <button onClick={() => { signOut(auth); setIsDevMode(false); setIsMobileMenuOpen(false); }} className="w-full rounded-2xl bg-slate-800 px-6 py-4 font-bold text-white shadow-sm cursor-pointer whitespace-nowrap text-center">
               Ausloggen
             </button>

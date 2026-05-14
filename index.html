@@ -10,6 +10,16 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="Fably">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <script>
+      (function() {
+        const isDark = localStorage.getItem('jammi_dark_mode') === 'true';
+        if (isDark) {
+          document.documentElement.classList.add('dark');
+        }
+        const theme = localStorage.getItem('jammi_theme') || 'orange';
+        document.documentElement.setAttribute('data-theme', theme);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
