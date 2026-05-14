@@ -11,16 +11,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Read firebase config properly
 let firebaseConfig: any = {};
-if (process.env.NODE_ENV !== 'production') {
-  try {
-    const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
-    if (fs.existsSync(configPath)) {
-      const configContent = fs.readFileSync(configPath, 'utf-8');
-      firebaseConfig = JSON.parse(configContent);
-    }
-  } catch (e) {
-    console.log("Could not load local firebase config, skipping.");
+try {
+  const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+  if (fs.existsSync(configPath)) {
+    const configContent = fs.readFileSync(configPath, 'utf-8');
+    firebaseConfig = JSON.parse(configContent);
   }
+} catch (e) {
+  console.log("Could not load local firebase config, skipping.");
 }
 
 // Initialize Firebase Admin
@@ -35,7 +33,7 @@ function initFirebase() {
       credential: admin.credential.applicationDefault()
     };
 
-    // Only inject overrides if we found a local config
+    // Always inject overrides if we found a local config
     if (firebaseConfig.projectId) options.projectId = firebaseConfig.projectId;
     if (firebaseConfig.storageBucket) options.storageBucket = firebaseConfig.storageBucket;
 
@@ -54,6 +52,7 @@ function initFirebase() {
       }
       try {
         bucket = admin.storage().bucket();
+        console.log("Storage bucket initialized successfully.");
       } catch (err: any) {
         console.warn("Could not initialize Storage admin bucket:", err.message);
       }
