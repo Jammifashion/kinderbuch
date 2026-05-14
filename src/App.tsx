@@ -640,10 +640,22 @@ export default function App() {
             body: JSON.stringify({ imageBase64: base64Data })
           });
           
-          const data = await res.json();
+          console.log("[Verzaubern] Response Status:", res.status, res.statusText);
+          const responseText = await res.text();
+          console.log("[Verzaubern] Response Text:", responseText.substring(0, 500));
+          
           if (!res.ok) {
-            throw new Error(data.error || "Unerwarteter Fehler");
+             let errorMsg = "Unerwarteter Fehler: " + res.status;
+             try {
+               const parsed = JSON.parse(responseText);
+               if (parsed.error) errorMsg = parsed.error;
+             } catch (e) {
+               console.warn("Could not parse error response as JSON", e);
+             }
+             throw new Error(errorMsg);
           }
+          
+          const data = JSON.parse(responseText);
 
           // Save to firestore
           await addDoc(collection(db, 'avatars'), {
