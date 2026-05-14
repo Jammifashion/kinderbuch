@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { db, auth, storage } from './lib/firebase';
 import { useLanguage } from './LanguageContext';
@@ -169,6 +169,10 @@ export default function App() {
   const [savingAvatarRef, setSavingAvatarRef] = useState<StoryResult | AusgearbeitetesBuch | null>(null);
   const [newAvatarName, setNewAvatarName] = useState('');
   const [isAvatarSaving, setIsAvatarSaving] = useState(false);
+  
+  const [isUploadingPlush, setIsUploadingPlush] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [isBackupManagerOpen, setIsBackupManagerOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -606,6 +610,62 @@ export default function App() {
       setSavedAvatars(avatars.sort((a,b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0)));
     } catch (err) {
       console.error("Error fetching avatars:", err);
+    }
+  };
+
+  const handlePlushUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setIsUploadingPlush(true);
+    setUploadError(null);
+    try {
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64Data = reader.result?.toString().split(',')[1];
+        if (!base64Data) {
+          setUploadError("Fehler beim Lesen des Bildes.");
+          setIsUploadingPlush(false);
+          return;
+        }
+
+        try {
+          const token = await auth.currentUser?.getIdToken();
+          const res = await fetch('/api/verzaubern', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ imageBase64: base64Data })
+          });
+          
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data.error || "Unerwarteter Fehler");
+          }
+
+          // Save to firestore
+          await addDoc(collection(db, 'avatars'), {
+            userId: isDevMode ? 'dev-user' : currentUser?.uid,
+            avatarName: 'Mein Kuscheltier-Held',
+            imageUrl: data.avatar_url,
+            characterDescriptionEn: data.prompt_en,
+            createdAt: serverTimestamp()
+          });
+
+          fetchAvatars(isDevMode ? 'dev-user' : currentUser?.uid || '');
+        } catch (err: any) {
+          setUploadError(err.message);
+        } finally {
+          setIsUploadingPlush(false);
+          if (fileInputRef.current) fileInputRef.current.value = '';
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (err: any) {
+      setUploadError(err.message);
+      setIsUploadingPlush(false);
     }
   };
 
@@ -1661,6 +1721,13 @@ Your output MUST have exactly this JSON format:
       </header>
       
       <main className="mx-auto max-w-3xl">
+        <input 
+          type="file" 
+          accept="image/*" 
+          ref={fileInputRef} 
+          onChange={handlePlushUpload} 
+          className="hidden" 
+        />
         <div className="hidden md:flex gap-2 sm:gap-4 border-b border-theme-primary-border mb-8 overflow-x-auto pb-2 scrollbar-hide">
           <button onClick={() => setActiveTab('dashboard')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'dashboard' ? 'border-theme-primary text-theme-primary' : 'border-transparent text-theme-muted hover:text-theme-primary'}`}>{t('dashboard.new_story_nav')}</button>
           <button onClick={() => setActiveTab('avatars')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'avatars' ? 'border-theme-primary text-theme-primary' : 'border-transparent text-theme-muted hover:text-theme-primary'}`}>🦸 Helden-Galerie</button>
@@ -1671,7 +1738,25 @@ Your output MUST have exactly this JSON format:
 
         {activeTab === 'dashboard' ? <Dashboard /> : activeTab === 'avatars' ? (
           <div className="mb-8 rounded-[40px] bg-theme-card p-8 shadow-xl border-4 border-theme-primary-softer">
-            <h2 className="text-2xl font-bold text-theme-title mb-6">Deine Helden-Galerie</h2>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+              <h2 className="text-2xl font-bold text-theme-title">Deine Helden-Galerie</h2>
+              <div className="flex flex-col items-end gap-2">
+                <button 
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploadingPlush}
+                  className="px-6 py-3 bg-theme-primary text-white font-bold rounded-full shadow-md hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 active:shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  <span className="text-xl">🧸</span> 
+                  {isUploadingPlush ? 'Wird verzaubert...' : 'Kuscheltier verzaubern'}
+                </button>
+              </div>
+            </div>
+            {uploadError && (
+              <div className="mb-6 p-4 bg-red-100 border border-red-200 text-red-700 rounded-2xl text-sm font-bold">
+                {uploadError}
+              </div>
+            )}
+            
             {savedAvatars.length === 0 ? (
               <p className="text-theme-muted italic">Du hast noch keine Helden gespeichert. Erstelle ein Buch und speichere den Helden im Buch-Skript!</p>
             ) : (
@@ -1716,7 +1801,21 @@ Your output MUST have exactly this JSON format:
               />
               
               <div className="mt-6 mb-2">
-                <h3 className="font-bold text-theme-base mb-3 text-sm">Oder wähle einen deiner Helden:</h3>
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-bold text-theme-base text-sm">Oder wähle einen deiner Helden:</h3>
+                  <button 
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isUploadingPlush}
+                    className="text-xs bg-theme-primary/10 text-theme-primary-strong px-3 py-1.5 rounded-full font-bold hover:bg-theme-primary/20 transition-colors flex items-center gap-1 disabled:opacity-50"
+                  >
+                    <span>🧸</span> {isUploadingPlush ? '...' : 'Kuscheltier hochladen'}
+                  </button>
+                </div>
+                {uploadError && (
+                  <div className="mb-3 p-3 bg-red-100 border border-red-200 text-red-700 rounded-xl text-xs font-bold">
+                    {uploadError}
+                  </div>
+                )}
                 {savedAvatars.length === 0 ? (
                   <p className="text-xs text-theme-muted italic">Noch keine Helden gespeichert. Erstelle eine Geschichte und speichere deinen ersten Held in der Helden-Galerie!</p>
                 ) : (

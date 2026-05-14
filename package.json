@@ -14,6 +14,7 @@
   "dependencies": {
     "@google-cloud/billing": "^5.1.2",
     "@google-cloud/billing-budgets": "^6.1.2",
+    "@google-cloud/vision": "^5.3.6",
     "@google/genai": "^1.29.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
