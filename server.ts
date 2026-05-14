@@ -213,14 +213,13 @@ async function startServer() {
         await file.save(buffer, {
           metadata: { contentType: "image/png" },
         });
-        await file.makePublic();
-        console.log(`[RegenerateAvatar] Image uploaded and made public.`);
+        console.log(`[RegenerateAvatar] Image uploaded.`);
       } catch (uploadErr: any) {
         console.error(`[RegenerateAvatar] Upload to Firebase Storage failed. (IAM permissions missing? Bucket wrong?):`, uploadErr);
         throw new Error(`Storage upload failed: ${uploadErr.message}`);
       }
 
-      const publicUrl = `https://storage.googleapis.com/${bucket.name}/${newImagePath}?t=${Date.now()}`;
+      const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(newImagePath)}?alt=media`;
       
       console.log(`[RegenerateAvatar] Updating Firestore document...`);
       await db.collection('buecher').doc(bookId).update({
@@ -379,9 +378,8 @@ async function startServer() {
       const file = bucket.file(newImagePath);
       const outputBuffer = Buffer.from(base64ImageResult, 'base64');
       await file.save(outputBuffer, { metadata: { contentType: "image/png" } });
-      await file.makePublic();
       
-      const publicUrl = `https://storage.googleapis.com/${bucket.name}/${newImagePath}?t=${Date.now()}`;
+      const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(newImagePath)}?alt=media`;
 
       res.json({ success: true, avatar_url: publicUrl, prompt_en: generatedPromptEn });
     } catch (error: any) {
