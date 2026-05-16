@@ -133,6 +133,9 @@ interface StoryResult {
     aussehen_de: string;
     bild_prompt_en: string;
     avatar_url?: string;
+    hobbys?: string;
+    lieblingsessen?: string;
+    aengste?: string;
   };
 }
 
@@ -153,6 +156,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'create' | 'library' | 'books'>('dashboard');
   const [isDevMode, setIsDevMode] = useState(false);
   const [idea, setIdea] = useState("");
+  const [plushName, setPlushName] = useState("Mein Kuscheltier-Held");
+  const [editingHeroId, setEditingHeroId] = useState<string | null>(null);
+  const [editingHeroName, setEditingHeroName] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
   const [isImageLoading, setIsImageLoading] = useState(false);
   const [isGeneratingBook, setIsGeneratingBook] = useState(false);
@@ -333,29 +339,29 @@ export default function App() {
 
           if (layoutType === 'image-only') {
               pageDiv.innerHTML = `
-                <div class="flex-1 rounded-2xl overflow-hidden relative shadow-inner" style="background-color: var(--color-theme-bg-softer);">
+                <div class="flex-1 rounded-2xl overflow-hidden relative shadow-inner" style="background-color: #f1f5f9;">
                     ${pageImgB64 ? `<div style="width: 100%; height: 100%; position: absolute; top: 0; left: 0; background-image: url('${pageImgB64}'); background-size: cover; background-position: center;"></div>` : ''}
                 </div>
-                <p class="absolute bottom-6 right-12 text-lg font-bold" style="color: var(--color-theme-muted-light);">${i + 1} / ${book.seiten.length}</p>
+                <p class="absolute bottom-6 right-12 text-lg font-bold" style="color: #94a3b8;">${i + 1} / ${book.seiten.length}</p>
               `;
           } else if (layoutType === 'text-only') {
               pageDiv.innerHTML = `
                 <div class="flex-1 flex items-center justify-center p-16">
-                    <p class="font-serif text-center leading-[1.6] ${fontSizeClass}" style="color: var(--color-theme-base);">${page.text.replace(/\n/g, '<br/>')}</p>
+                    <p class="font-serif text-center leading-[1.6] ${fontSizeClass}" style="color: #1e293b;">${page.text.replace(/\n/g, '<br/>')}</p>
                 </div>
-                <p class="absolute bottom-6 right-12 text-lg font-bold" style="color: var(--color-theme-muted-light);">${i + 1} / ${book.seiten.length}</p>
+                <p class="absolute bottom-6 right-12 text-lg font-bold" style="color: #94a3b8;">${i + 1} / ${book.seiten.length}</p>
               `;
           } else {
               pageDiv.innerHTML = `
                 <div class="flex-1 flex flex-col gap-8 pb-12">
-                    <div class="w-full h-[500px] rounded-2xl overflow-hidden relative shadow-inner shrink-0" style="background-color: var(--color-theme-bg-softer);">
+                    <div class="w-full h-[500px] rounded-2xl overflow-hidden relative shadow-inner shrink-0" style="background-color: #f1f5f9;">
                       ${pageImgB64 ? `<div style="width: 100%; height: 100%; position: absolute; top: 0; left: 0; background-image: url('${pageImgB64}'); background-size: cover; background-position: center;"></div>` : ''}
                     </div>
                     <div class="flex-1 flex items-center justify-center px-8">
-                      <p class="font-serif text-center leading-[1.6] ${fontSizeClass}" style="color: var(--color-theme-base);">${page.text.replace(/\n/g, '<br/>')}</p>
+                      <p class="font-serif text-center leading-[1.6] ${fontSizeClass}" style="color: #1e293b;">${page.text.replace(/\n/g, '<br/>')}</p>
                     </div>
                 </div>
-                <p class="absolute bottom-6 right-12 text-lg font-bold" style="color: var(--color-theme-muted-light);">${i + 1} / ${book.seiten.length}</p>
+                <p class="absolute bottom-6 right-12 text-lg font-bold" style="color: #94a3b8;">${i + 1} / ${book.seiten.length}</p>
               `;
           }
 
@@ -660,7 +666,7 @@ export default function App() {
           // Save to firestore
           await addDoc(collection(db, 'avatars'), {
             userId: isDevMode ? 'dev-user' : currentUser?.uid,
-            avatarName: 'Mein Kuscheltier-Held',
+            avatarName: plushName.trim() || 'Mein Kuscheltier-Held',
             imageUrl: data.avatar_url,
             characterDescriptionEn: data.prompt_en,
             createdAt: serverTimestamp()
@@ -912,7 +918,7 @@ export default function App() {
         "zielgruppe": "...",
         "storyline": { "anfang": "...", "mitte": "...", "ende": "..." },
         "story_skelett": { "kapitel_1": "...", "kapitel_2": "...", "kapitel_3": "...", "kapitel_4": "...", "kapitel_5": "..." },
-        "hauptcharakter": { "name": "...", "gattung": "...", "persoenlichkeit": "...", "aussehen_de": "...", "bild_prompt_en": "Example: 'A cute, small baby bear, wearing a bright yellow short-sleeve t-shirt under classic dark blue denim dungarees, a red baseball cap, and tiny white sneakers. Big friendly eyes, cartoon illustration style, vibrant Pixar colors, clean white background, 3d render style.'" }
+        "hauptcharakter": { "name": "...", "gattung": "...", "persoenlichkeit": "...", "hobbys": "...", "lieblingsessen": "...", "aengste": "...", "aussehen_de": "...", "bild_prompt_en": "Example: 'A cute, small baby bear, wearing a bright yellow short-sleeve t-shirt under classic dark blue denim dungarees, a red baseball cap, and tiny white sneakers. Big friendly eyes, cartoon illustration style, vibrant Pixar colors, clean white background, 3d render style.'" }
       }`;
       
       const response = await ai.models.generateContent({
@@ -1753,14 +1759,23 @@ Your output MUST have exactly this JSON format:
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
               <h2 className="text-2xl font-bold text-theme-title">Deine Helden-Galerie</h2>
               <div className="flex flex-col items-end gap-2">
-                <button 
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isUploadingPlush}
-                  className="px-6 py-3 bg-theme-primary text-white font-bold rounded-full shadow-md hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 active:shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  <span className="text-xl">🧸</span> 
-                  {isUploadingPlush ? 'Wird verzaubert...' : 'Kuscheltier verzaubern'}
-                </button>
+                <div className="flex items-center gap-2">
+                  <input 
+                    type="text" 
+                    placeholder="Name des Kuscheltiers" 
+                    value={plushName} 
+                    onChange={e => setPlushName(e.target.value)} 
+                    className="border border-theme-border rounded-full px-4 py-3 focus:outline-none focus:border-theme-primary"
+                  />
+                  <button 
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isUploadingPlush || !plushName.trim()}
+                    className="px-6 py-3 bg-theme-primary text-white font-bold rounded-full shadow-md hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 active:shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    <span className="text-xl">🧸</span> 
+                    {isUploadingPlush ? 'Wird verzaubert...' : 'Foto hochladen'}
+                  </button>
+                </div>
               </div>
             </div>
             {uploadError && (
@@ -1776,25 +1791,63 @@ Your output MUST have exactly this JSON format:
                 {savedAvatars.map(avatar => (
                   <div 
                     key={avatar.id} 
-                    className="flex flex-col items-center gap-3 cursor-pointer group"
+                    className="flex flex-col items-center gap-3 cursor-pointer group relative"
                     onClick={() => {
-                      setSelectedAvatarId(avatar.id);
-                      setActiveTab('create');
+                      if (editingHeroId !== avatar.id) {
+                        setSelectedAvatarId(avatar.id);
+                        setActiveTab('create');
+                      }
                     }}
                   >
                     <div className="relative w-full">
                       <img src={avatar.imageUrl} alt={avatar.avatarName} className="w-full aspect-square object-cover rounded-3xl shadow-sm border-4 border-theme-bg-softer group-hover:border-theme-primary transition-all duration-300" />
-                      <div className="absolute inset-0 rounded-3xl bg-theme-primary/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <div className={`absolute inset-0 rounded-3xl bg-theme-primary/10 transition-opacity flex items-center justify-center ${editingHeroId === avatar.id ? 'opacity-0' : 'opacity-0 group-hover:opacity-100'}`}>
                         <span className="bg-white text-theme-primary font-bold px-3 py-1 rounded-full shadow text-xs">Aussuchen</span>
                       </div>
                     </div>
-                    <span className="font-bold text-sm text-theme-base group-hover:text-theme-primary-strong transition-colors text-center">{avatar.avatarName}</span>
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); handleDeleteAvatar(avatar.id); }}
-                      className="text-[10px] bg-red-100 text-red-600 px-2 py-1 rounded shadow-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-200"
-                    >
-                      Löschen
-                    </button>
+                    {editingHeroId === avatar.id ? (
+                      <div className="flex flex-col items-center gap-1 w-full" onClick={e => e.stopPropagation()}>
+                        <input 
+                          autoFocus
+                          type="text" 
+                          value={editingHeroName}
+                          onChange={(e) => setEditingHeroName(e.target.value)}
+                          onKeyDown={async (e) => {
+                            if (e.key === 'Enter') {
+                              await updateDoc(doc(db, 'avatars', avatar.id), { avatarName: editingHeroName });
+                              setEditingHeroId(null);
+                            } else if (e.key === 'Escape') {
+                              setEditingHeroId(null);
+                            }
+                          }}
+                          onBlur={async () => {
+                            await updateDoc(doc(db, 'avatars', avatar.id), { avatarName: editingHeroName });
+                            setEditingHeroId(null);
+                          }}
+                          className="w-full text-center border-b-2 border-theme-primary outline-none bg-transparent font-bold text-sm"
+                        />
+                        <span className="text-[9px] text-theme-muted">Enter zum Speichern</span>
+                      </div>
+                    ) : (
+                      <span className="font-bold text-sm text-theme-base group-hover:text-theme-primary-strong transition-colors text-center px-2">{avatar.avatarName}</span>
+                    )}
+                    
+                    {editingHeroId !== avatar.id && (
+                      <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity absolute top-2 right-2">
+                         <button 
+                          onClick={(e) => { e.stopPropagation(); setEditingHeroName(avatar.avatarName); setEditingHeroId(avatar.id); }}
+                          className="text-xs bg-white text-theme-base px-2 py-1 rounded shadow-sm hover:text-theme-primary"
+                        >
+                          ✏️
+                        </button>
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); handleDeleteAvatar(avatar.id); }}
+                          className="text-xs bg-white text-red-600 px-2 py-1 rounded shadow-sm hover:text-red-800"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1813,15 +1866,24 @@ Your output MUST have exactly this JSON format:
               />
               
               <div className="mt-6 mb-2">
-                <div className="flex justify-between items-center mb-3">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3 gap-2">
                   <h3 className="font-bold text-theme-base text-sm">Oder wähle einen deiner Helden:</h3>
-                  <button 
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isUploadingPlush}
-                    className="text-xs bg-theme-primary/10 text-theme-primary-strong px-3 py-1.5 rounded-full font-bold hover:bg-theme-primary/20 transition-colors flex items-center gap-1 disabled:opacity-50"
-                  >
-                    <span>🧸</span> {isUploadingPlush ? '...' : 'Kuscheltier hochladen'}
-                  </button>
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                    <input 
+                      type="text" 
+                      placeholder="Name des Kuscheltiers" 
+                      value={plushName} 
+                      onChange={e => setPlushName(e.target.value)} 
+                      className="text-xs border border-theme-border rounded-full px-3 py-1.5 focus:outline-none focus:border-theme-primary w-full sm:w-auto"
+                    />
+                    <button 
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isUploadingPlush || !plushName.trim()}
+                      className="whitespace-nowrap text-xs bg-theme-primary/10 text-theme-primary-strong px-3 py-1.5 rounded-full font-bold hover:bg-theme-primary/20 transition-colors flex items-center gap-1 disabled:opacity-50"
+                    >
+                      <span>🧸</span> {isUploadingPlush ? '...' : 'Foto hochladen'}
+                    </button>
+                  </div>
                 </div>
                 {uploadError && (
                   <div className="mb-3 p-3 bg-red-100 border border-red-200 text-red-700 rounded-xl text-xs font-bold">
@@ -1927,11 +1989,39 @@ Your output MUST have exactly this JSON format:
                 
                 <section className="rounded-[40px] bg-[#F2FCEF] p-8 shadow-md border-2 border-green-100">
                   <div className="flex flex-col md:flex-row gap-6">
-                    <div className="flex-1">
-                      <h2 className="mb-2 text-2xl font-bold text-green-800">Held: {result.hauptcharakter.name}</h2>
-                      <p className="text-sm text-green-700"><strong>Gattung:</strong> {result.hauptcharakter.gattung}</p>
-                      <p className="text-sm text-green-700"><strong>Persönlichkeit:</strong> {result.hauptcharakter.persoenlichkeit}</p>
-                      <p className="mt-2 text-sm text-green-900 italic">{result.hauptcharakter.aussehen_de}</p>
+                    <div className="flex-1 space-y-3">
+                      <div className="flex items-center gap-2 mb-2">
+                         <h2 className="text-xl font-bold text-green-800">Held:</h2>
+                         <input type="text" value={result.hauptcharakter.name || ""} onChange={(e) => { setResult({...result, hauptcharakter: {...result.hauptcharakter, name: e.target.value}}); updateDoc(doc(db, 'buecher', result.id), { 'hauptcharakter.name': e.target.value }); }} className="font-bold text-green-800 text-xl border-b-2 border-transparent hover:border-green-300 focus:border-green-500 bg-transparent outline-none w-full" />
+                      </div>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-xs font-bold text-green-600 block mb-1">Gattung</label>
+                          <input type="text" value={result.hauptcharakter.gattung || ""} onChange={(e) => setResult({...result, hauptcharakter: {...result.hauptcharakter, gattung: e.target.value}})} onBlur={() => updateDoc(doc(db, 'buecher', result.id), { 'hauptcharakter.gattung': result.hauptcharakter.gattung })} className="w-full text-sm text-green-900 border-b border-green-200 hover:border-green-400 focus:border-green-500 bg-transparent outline-none pb-1" />
+                        </div>
+                        <div>
+                          <label className="text-xs font-bold text-green-600 block mb-1">Persönlichkeit</label>
+                          <input type="text" value={result.hauptcharakter.persoenlichkeit || ""} onChange={(e) => setResult({...result, hauptcharakter: {...result.hauptcharakter, persoenlichkeit: e.target.value}})} onBlur={() => updateDoc(doc(db, 'buecher', result.id), { 'hauptcharakter.persoenlichkeit': result.hauptcharakter.persoenlichkeit })} className="w-full text-sm text-green-900 border-b border-green-200 hover:border-green-400 focus:border-green-500 bg-transparent outline-none pb-1" />
+                        </div>
+                        <div>
+                          <label className="text-xs font-bold text-green-600 block mb-1">Hobbys</label>
+                          <input type="text" value={result.hauptcharakter.hobbys || ""} placeholder="Bsp: Verstecken spielen" onChange={(e) => setResult({...result, hauptcharakter: {...result.hauptcharakter, hobbys: e.target.value}})} onBlur={() => updateDoc(doc(db, 'buecher', result.id), { 'hauptcharakter.hobbys': result.hauptcharakter.hobbys })} className="w-full text-sm text-green-900 border-b border-green-200 hover:border-green-400 focus:border-green-500 bg-transparent outline-none pb-1" />
+                        </div>
+                        <div>
+                          <label className="text-xs font-bold text-green-600 block mb-1">Lieblingsessen</label>
+                          <input type="text" value={result.hauptcharakter.lieblingsessen || ""} placeholder="Bsp: Honig mit Beeren" onChange={(e) => setResult({...result, hauptcharakter: {...result.hauptcharakter, lieblingsessen: e.target.value}})} onBlur={() => updateDoc(doc(db, 'buecher', result.id), { 'hauptcharakter.lieblingsessen': result.hauptcharakter.lieblingsessen })} className="w-full text-sm text-green-900 border-b border-green-200 hover:border-green-400 focus:border-green-500 bg-transparent outline-none pb-1" />
+                        </div>
+                        <div>
+                          <label className="text-xs font-bold text-green-600 block mb-1">Ängste</label>
+                          <input type="text" value={result.hauptcharakter.aengste || ""} placeholder="Bsp: Gewitter" onChange={(e) => setResult({...result, hauptcharakter: {...result.hauptcharakter, aengste: e.target.value}})} onBlur={() => updateDoc(doc(db, 'buecher', result.id), { 'hauptcharakter.aengste': result.hauptcharakter.aengste })} className="w-full text-sm text-green-900 border-b border-green-200 hover:border-green-400 focus:border-green-500 bg-transparent outline-none pb-1" />
+                        </div>
+                      </div>
+
+                      <div className="mt-4">
+                        <label className="text-xs font-bold text-green-600 block mb-1">Aussehen (für KI-Prompt)</label>
+                        <textarea value={result.hauptcharakter.aussehen_de || ""} onChange={(e) => setResult({...result, hauptcharakter: {...result.hauptcharakter, aussehen_de: e.target.value}})} onBlur={() => updateDoc(doc(db, 'buecher', result.id), { 'hauptcharakter.aussehen_de': result.hauptcharakter.aussehen_de })} className="w-full text-sm text-green-900 bg-green-100 p-3 rounded-xl outline-none resize-none focus:ring-2 focus:ring-green-400" rows={2} />
+                      </div>
                     </div>
                     <div className="flex flex-col items-center gap-4">
                       <div id="characterImagePlaceholder" className="flex-none w-48 h-48 rounded-2xl bg-theme-card flex items-center justify-center text-theme-muted-light border-dashed border-4 border-theme-border-strong overflow-hidden">
@@ -2340,6 +2430,36 @@ Your output MUST have exactly this JSON format:
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 bg-[#F2FCEF] p-6 rounded-[30px] border border-green-200">
+                <div className="col-span-full">
+                  <h4 className="font-bold text-green-800 uppercase tracking-widest text-xs mb-2">Charakter-Profil</h4>
+                </div>
+                <div className="flex flex-col">
+                  <label className="block text-xs font-bold text-green-700 mb-2">Name</label>
+                  <input type="text" value={editingBook.hauptcharakter.name || ""} onChange={(e) => setEditingBook({...editingBook, hauptcharakter: {...editingBook.hauptcharakter, name: e.target.value}})} className="rounded-xl border border-green-200 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400 bg-white" />
+                </div>
+                <div className="flex flex-col">
+                  <label className="block text-xs font-bold text-green-700 mb-2">Gattung</label>
+                  <input type="text" value={editingBook.hauptcharakter.gattung || ""} onChange={(e) => setEditingBook({...editingBook, hauptcharakter: {...editingBook.hauptcharakter, gattung: e.target.value}})} className="rounded-xl border border-green-200 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400 bg-white" />
+                </div>
+                <div className="flex flex-col">
+                  <label className="block text-xs font-bold text-green-700 mb-2">Persönlichkeit</label>
+                  <input type="text" value={editingBook.hauptcharakter.persoenlichkeit || ""} onChange={(e) => setEditingBook({...editingBook, hauptcharakter: {...editingBook.hauptcharakter, persoenlichkeit: e.target.value}})} className="rounded-xl border border-green-200 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400 bg-white" />
+                </div>
+                <div className="flex flex-col">
+                  <label className="block text-xs font-bold text-green-700 mb-2">Hobbys</label>
+                  <input type="text" value={editingBook.hauptcharakter.hobbys || ""} onChange={(e) => setEditingBook({...editingBook, hauptcharakter: {...editingBook.hauptcharakter, hobbys: e.target.value}})} className="rounded-xl border border-green-200 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400 bg-white" placeholder="Was macht der Charakter gerne?" />
+                </div>
+                <div className="flex flex-col">
+                  <label className="block text-xs font-bold text-green-700 mb-2">Lieblingsessen</label>
+                  <input type="text" value={editingBook.hauptcharakter.lieblingsessen || ""} onChange={(e) => setEditingBook({...editingBook, hauptcharakter: {...editingBook.hauptcharakter, lieblingsessen: e.target.value}})} className="rounded-xl border border-green-200 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400 bg-white" placeholder="Was isst er am liebsten?" />
+                </div>
+                <div className="flex flex-col">
+                  <label className="block text-xs font-bold text-green-700 mb-2">Ängste</label>
+                  <input type="text" value={editingBook.hauptcharakter.aengste || ""} onChange={(e) => setEditingBook({...editingBook, hauptcharakter: {...editingBook.hauptcharakter, aengste: e.target.value}})} className="rounded-xl border border-green-200 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-400 bg-white" placeholder="Wovor fürchtet er sich?" />
+                </div>
+              </div>
+
               <div className="flex flex-col items-center gap-4 bg-theme-bg-soft p-6 rounded-[30px] border border-theme-border">
                 <h4 className="font-bold text-theme-muted uppercase tracking-widest text-xs">Charakter Avatar</h4>
                 {editingBook.hauptcharakter.avatar_url ? (
@@ -2522,11 +2642,11 @@ Your output MUST have exactly this JSON format:
                         className="absolute w-full h-[85%] px-4 md:px-8 flex flex-col transition-transform duration-300 ease-in-out"
                         style={{ transform: `translateX(${translatePercent}%)`, opacity: isActive ? 1 : 0.3 }}
                       >
-                         <div className="flex-1 bg-[#fdf9f0] text-theme-base rounded-[32px] p-8 md:p-16 shadow-2xl flex flex-col justify-center items-center relative border border-theme-primary-soft/50">
+                         <div className="flex-1 bg-[#fdf9f0] text-slate-900 rounded-[32px] p-8 md:p-16 shadow-2xl flex flex-col justify-center items-center relative border border-theme-primary-soft/50">
                             {editingPageIdx === idx ? (
                                 <>
                                   <textarea 
-                                    className="bg-theme-card/50 text-theme-base p-6 rounded-2xl w-full flex-1 focus:outline-none resize-none text-xl md:text-2xl font-serif text-center"
+                                    className="bg-white/50 text-slate-900 p-6 rounded-2xl w-full flex-1 focus:outline-none resize-none text-xl md:text-2xl font-serif text-center"
                                     value={editingText}
                                     onChange={(e) => setEditingText(e.target.value)}
                                   />
@@ -2534,7 +2654,7 @@ Your output MUST have exactly this JSON format:
                                 </>
                             ) : (
                                 <>
-                                   <p className={`font-serif text-center leading-[1.6] text-theme-base ${seite.text.length < 150 ? 'text-2xl md:text-3xl lg:text-4xl' : (seite.text.length < 250 ? 'text-xl md:text-2xl lg:text-3xl' : 'text-base md:text-lg lg:text-xl')}`}>{seite.text}</p>
+                                   <p className={`font-serif text-center leading-[1.6] text-slate-900 ${seite.text.length < 150 ? 'text-2xl md:text-3xl lg:text-4xl' : (seite.text.length < 250 ? 'text-xl md:text-2xl lg:text-3xl' : 'text-base md:text-lg lg:text-xl')}`}>{seite.text}</p>
                                    <button 
                                       className="absolute top-6 right-6 bg-theme-primary-soft text-theme-primary rounded-full w-10 h-10 flex items-center justify-center hover:bg-theme-primary-border transition cursor-pointer"
                                       onClick={() => { setEditingPageIdx(idx); setEditingText(seite.text); }}
