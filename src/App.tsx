@@ -156,7 +156,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'create' | 'library' | 'books'>('dashboard');
   const [isDevMode, setIsDevMode] = useState(false);
   const [idea, setIdea] = useState("");
-  const [plushName, setPlushName] = useState("Mein Kuscheltier-Held");
+  const [plushName, setPlushName] = useState("");
   const [editingHeroId, setEditingHeroId] = useState<string | null>(null);
   const [editingHeroName, setEditingHeroName] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
@@ -184,6 +184,9 @@ export default function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [autoBackups, setAutoBackups] = useState<any[]>([]);
   const [isBackupLoading, setIsBackupLoading] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(() => {
+    return localStorage.getItem('jammi_has_seen_onboarding') !== 'true';
+  });
   
   const [allFinishedBooks, setAllFinishedBooks] = useState<AusgearbeitetesBuch[]>([]);
   const [savedAvatars, setSavedAvatars] = useState<Avatar[]>([]);
@@ -637,13 +640,14 @@ export default function App() {
 
         try {
           const token = await auth.currentUser?.getIdToken();
+          const finalName = plushName.trim() || 'Mein Kuscheltier-Held';
           const res = await fetch('/api/verzaubern', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${token}`
             },
-            body: JSON.stringify({ imageBase64: base64Data })
+            body: JSON.stringify({ imageBase64: base64Data, plushName: finalName })
           });
           
           console.log("[Verzaubern] Response Status:", res.status, res.statusText);
@@ -664,14 +668,16 @@ export default function App() {
           const data = JSON.parse(responseText);
 
           // Save to firestore
-          await addDoc(collection(db, 'avatars'), {
+          const docRef = await addDoc(collection(db, 'avatars'), {
             userId: isDevMode ? 'dev-user' : currentUser?.uid,
-            avatarName: plushName.trim() || 'Mein Kuscheltier-Held',
+            avatarName: finalName,
             imageUrl: data.avatar_url,
             characterDescriptionEn: data.prompt_en,
             createdAt: serverTimestamp()
           });
 
+          setSelectedAvatarId(docRef.id);
+          setPlushName(""); // Reset
           fetchAvatars(isDevMode ? 'dev-user' : currentUser?.uid || '');
         } catch (err: any) {
           setUploadError(err.message);
@@ -1651,6 +1657,49 @@ Your output MUST have exactly this JSON format:
 
   return (
     <div className="min-h-screen bg-theme-bg p-4 sm:p-6 font-sans text-theme-base w-full max-w-full overflow-x-hidden relative">
+      {/* Onboarding Modal */}
+      {showOnboarding && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" />
+          <div className="relative w-full max-w-lg bg-theme-card rounded-[40px] shadow-2xl p-8 md:p-12 text-center animate-in zoom-in-95 duration-500 overflow-hidden">
+            {/* Playful background blobs */}
+            <div className="absolute top-0 left-0 w-32 h-32 bg-amber-200/50 rounded-full blur-3xl -translate-x-1/2 -translate-y-1/2 pointer-events-none" />
+            <div className="absolute bottom-0 right-0 w-40 h-40 bg-orange-200/50 rounded-full blur-3xl translate-x-1/4 translate-y-1/4 pointer-events-none" />
+            
+            <div className="relative">
+              <span className="text-8xl block mb-6 animate-bounce" style={{ animationDuration: '2s' }}>🦝</span>
+              <h1 className="text-3xl md:text-4xl font-magic text-theme-primary mb-4">Hallo! Ich bin Milo!</h1>
+              <p className="text-lg text-theme-base font-medium mb-6">
+                Ich bin ein magischer Waschbär. Ich kann <strong>jedes Kuscheltier</strong> verzaubern und in einen eigenen heldenhaften Star einer Gutenachtgeschichte verwandeln!
+              </p>
+              <div className="bg-theme-bg-soft rounded-[24px] p-6 mb-8 text-left space-y-4 shadow-sm border border-theme-border">
+                <div className="flex gap-4 items-start">
+                  <span className="text-2xl mt-1">📸</span>
+                  <p className="text-sm font-medium"><strong className="text-theme-primary-strong">1. Foto hochladen:</strong> Mache ein Foto von deinem Lieblingskuscheltier und gib ihm einen tollen Namen.</p>
+                </div>
+                <div className="flex gap-4 items-start">
+                  <span className="text-2xl mt-1">✨</span>
+                  <p className="text-sm font-medium"><strong className="text-theme-primary-strong">2. Magie wirken lassen:</strong> Ich zaubere daraus einen wunderschönen digitalen Charakter für dein Buch.</p>
+                </div>
+                <div className="flex gap-4 items-start">
+                  <span className="text-2xl mt-1">📖</span>
+                  <p className="text-sm font-medium"><strong className="text-theme-primary-strong">3. Buch drucken:</strong> Denke dir ein kleines Abenteuer aus und lade dir das fertige Buch mit wunderschönen Bildern herunter.</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => {
+                  setShowOnboarding(false);
+                  localStorage.setItem('jammi_has_seen_onboarding', 'true');
+                }}
+                className="w-full bg-theme-primary text-white font-bold text-xl py-4 rounded-full shadow-lg hover:shadow-xl hover:-translate-y-1 transition-all active:translate-y-0"
+              >
+                Lass uns loslegen! 🪄
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <header className="mb-6 sm:mb-12 flex flex-col items-center justify-center mt-2 sm:mt-4 relative z-40 bg-theme-bg gap-4">
         <div className="flex flex-col md:flex-row items-center gap-4">
           <h1 className="text-3xl sm:text-4xl md:text-5xl font-magic tracking-normal text-theme-primary drop-shadow-[0_2px_2px_rgba(249,115,22,0.2)] text-center">

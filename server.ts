@@ -287,7 +287,7 @@ async function startServer() {
         return res.status(401).json({ error: "Unauthorized" });
       }
 
-      const { imageBase64 } = req.body;
+      const { imageBase64, plushName } = req.body;
       if (!imageBase64) {
         return res.status(400).json({ error: "No image provided" });
       }
@@ -324,7 +324,7 @@ async function startServer() {
       }
       const aiServer = new GoogleGenAI({ apiKey });
       
-      const analysisPrompt = "Analyze this plush toy. Describe its species, main colors, textures, and any unique features (like a hat or a scarf). Create a detailed prompt in English for a 3D Pixar-style character generation based on this toy. Output ONLY the English prompt.";
+      const analysisPrompt = `Analyze this plush toy. Its name is ${plushName || 'the plush toy'}. Describe its species, main colors, textures, and any unique features (like a hat or a scarf). Create a detailed prompt in English for a perfect digital character illustration based on this toy. Output ONLY the English prompt.`;
       
       const analysisResponse = await aiServer.models.generateContent({
         model: 'gemini-3.1-pro-preview',
@@ -348,7 +348,7 @@ async function startServer() {
       generatedPromptEn = generatedPromptEn.replace(/^```(\w+)?\n/g, '').replace(/\n```$/g, '').trim();
 
       // 3. Image Generation
-      const finalPrompt = generatedPromptEn + ", absolutely no text, no letters, no words, no typography, no signatures, clean character digital art style, perfect illustration, 3d pixar style";
+      const finalPrompt = generatedPromptEn + ", absolutely no text, no letters, no words, no typography, no signatures, clean character digital art style, perfect illustration";
       console.log(`[Verzaubern] Prompt being sent: "${finalPrompt}"`);
 
       const imgResponse = await aiServer.models.generateContent({
