@@ -247,14 +247,15 @@ export default function App() {
   const canPerformAction = () => {
     if (isDevMode) return true;
     if (!userData) return false;
-    if (userData.role === 'admin') return true;
+    if (currentUser?.email === ADMIN_EMAIL) return true;
     return userData.credits > 0;
   };
 
-  const deductCredit = async () => {
-    if (isDevMode || !userData || userData.role === 'admin') return;
+  const deductCredit = async (action: 'book' | 'avatar', pages?: number) => {
+    if (isDevMode || !userData || currentUser?.email === ADMIN_EMAIL) return;
     try {
-      const newCredits = Math.max(0, userData.credits - 1);
+      const cost = action === 'avatar' ? 0.15 : (pages && pages <= 12 ? 0.75 : pages && pages <= 16 ? 1 : 1.25);
+      const newCredits = Math.max(0, userData.credits - cost);
       await updateDoc(doc(db, 'users', userData.uid), { credits: newCredits });
       setUserData(prev => prev ? { ...prev, credits: newCredits } : null);
     } catch (err) {
@@ -657,9 +658,44 @@ export default function App() {
     }
   };
 
-  const fetchBooks = async () => {
+  const migrateLegacyDataToAdmin = async () => {
+    if (!currentUser || currentUser.email !== ADMIN_EMAIL) return;
     try {
-      const querySnapshot = await getDocs(collection(db, 'buecher'));
+      if (!window.confirm("Alle alten Daten (oder Daten von christianjammi) auf gbr@jammifashion.de umschreiben?")) return;
+      
+      let count = 0;
+      const buecherSnap = await getDocs(collection(db, 'buecher'));
+      for (const d of buecherSnap.docs) {
+        const data = d.data();
+        if (!data.createdByUser || data.createdByUser === 'christianjammi@gmail.com') {
+          await updateDoc(doc(db, 'buecher', d.id), { createdByUser: ADMIN_EMAIL });
+          count++;
+        }
+      }
+
+      const ausBuecherSnap = await getDocs(collection(db, 'ausgearbeitete_buecher'));
+      for (const d of ausBuecherSnap.docs) {
+        const data = d.data();
+        if (!data.createdByUser || data.createdByUser === 'christianjammi@gmail.com') {
+          await updateDoc(doc(db, 'ausgearbeitete_buecher', d.id), { createdByUser: ADMIN_EMAIL });
+          count++;
+        }
+      }
+
+      alert(`Migration erfolgreich! ${count} Einträge wurden gbr@jammifashion.de zugeordnet.`);
+      fetchBooks();
+      fetchFinishedBooks();
+    } catch (err) {
+      console.error("Migration failed:", err);
+      alert("Fehler bei der Migration.");
+    }
+  };
+
+  const fetchBooks = async () => {
+    if (!currentUser) return;
+    try {
+      const q = query(collection(db, 'buecher'), where('createdByUser', '==', currentUser.email));
+      const querySnapshot = await getDocs(q);
       const books = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StoryResult));
       setAllBooks(books);
     } catch (err) {
@@ -668,8 +704,10 @@ export default function App() {
   };
 
   const fetchFinishedBooks = async () => {
+    if (!currentUser) return;
     try {
-      const querySnapshot = await getDocs(collection(db, 'ausgearbeitete_buecher'));
+      const q = query(collection(db, 'ausgearbeitete_buecher'), where('createdByUser', '==', currentUser.email));
+      const querySnapshot = await getDocs(q);
       const books = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AusgearbeitetesBuch));
       setAllFinishedBooks(books);
     } catch (err) {
@@ -744,7 +782,7 @@ export default function App() {
             createdAt: serverTimestamp()
           });
 
-          await deductCredit();
+          await deductCredit('avatar');
 
           setSelectedAvatarId(docRef.id);
           setPlushName(""); // Reset
@@ -1690,7 +1728,7 @@ Your output MUST have exactly this JSON format:
       const newCount = count + 1;
       await updateDoc(doc(db, 'buecher', selectedSkriptForBook.id), { erzeugteBuecherCount: newCount });
 
-      await deductCredit();
+      await deductCredit('book', seitenAnzahl);
 
       const finalizedBook = { id: docRef.id, ...newBookData, seiten: pages, kosten_protokoll: kostenProtokoll } as AusgearbeitetesBuch;
       
@@ -1780,7 +1818,7 @@ Your output MUST have exactly this JSON format:
           </h1>
           
           {/* Language Switcher in Header */}
-          <div className="flex gap-2 p-1 bg-theme-card rounded-full shadow-sm border border-theme-primary-softer">
+          <div className="flex gap-2 p-1 bg-theme-card rounded-full shadow-sm border border-theme-primary-softer items-center">
             <button 
               onClick={() => setLanguage('de')} 
               className={`w-8 h-8 flex items-center justify-center rounded-full transition-all text-xs ${language === 'de' ? 'bg-theme-primary-soft shadow-inner' : 'grayscale opacity-50 hover:grayscale-0 hover:opacity-100'}`}
@@ -1795,6 +1833,15 @@ Your output MUST have exactly this JSON format:
             >
               EN
             </button>
+            {currentUser?.email === ADMIN_EMAIL && (
+              <button 
+                onClick={migrateLegacyDataToAdmin} 
+                className="px-2 py-1 bg-red-500/10 text-red-500 hover:bg-red-500/20 text-xs font-bold rounded-full transition-colors ml-2"
+                title="Migrate Data"
+              >
+                Migrate
+              </button>
+            )}
           </div>
           
           {/* Dark Mode and Theme Switcher */}
@@ -1835,7 +1882,7 @@ Your output MUST have exactly this JSON format:
           {userData && (
             <div className="flex items-center justify-center px-4 py-1.5 bg-theme-primary/10 rounded-full border border-theme-primary/30">
               <span className="text-sm font-bold text-theme-primary">
-                {userData.role === 'admin' ? "💎 Magie-Punkte: Unendlich" : `💎 Magie-Punkte: ${userData.credits}`}
+                {currentUser?.email === ADMIN_EMAIL ? "💎 Magie-Punkte: Unendlich" : `💎 Magie-Punkte: ${userData.credits}`}
               </span>
             </div>
           )}
@@ -2271,7 +2318,7 @@ Your output MUST have exactly this JSON format:
                 <h3 className="font-bold text-lg">{book.ausgewaehlter_titel || t('library.untitled')}</h3>
                 <div className="flex justify-between items-center text-sm font-bold text-theme-muted">
                   <span>{book.created_at ? new Date(book.created_at.seconds * 1000).toLocaleDateString() : t('library.unknown_date')}</span>
-                  {currentUser?.email === ADMIN_EMAIL && book.cost_metrics && <span>💰 ${book.cost_metrics.total_cost_usd.toFixed(2)}</span>}
+                    {currentUser?.email === ADMIN_EMAIL && book.cost_metrics && <span>💰 ${book.cost_metrics.total_cost_usd.toFixed(2)}</span>}
                 </div>
                 <div className="flex gap-2">
                   <button 
@@ -2350,30 +2397,35 @@ Your output MUST have exactly this JSON format:
                     <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-2 py-1 rounded-md">{getTranslatedLabel('zielalter', book.zielalter)}</span>
                     <span className="bg-pink-100 text-pink-800 text-xs font-bold px-2 py-1 rounded-md">{getTranslatedLabel('stimmung', book.stimmung)}</span>
                     <span className="bg-theme-bg-softer text-theme-muted text-xs font-bold px-2 py-1 rounded-md">{book.seitenAnzahl} {t('book.pages_suffix')}</span>
-                    {currentUser?.email === ADMIN_EMAIL && book.kosten_protokoll && (
+                    {book.kosten_protokoll && (
                       <div className="relative group ml-1">
                         <div className="text-xs bg-emerald-100 text-emerald-800 font-bold px-2 py-1 rounded-md cursor-help">
-                          💰 ${(book.kosten_protokoll.gesamt_kosten_usd || 0).toFixed(4)}
+                          {currentUser?.email === ADMIN_EMAIL ? 
+                            `💰 $${(book.kosten_protokoll.gesamt_kosten_usd || 0).toFixed(4)}` :
+                            `💎 ${book.seitenAnzahl <= 12 ? 0.75 : book.seitenAnzahl <= 16 ? 1 : 1.25}`
+                          }
                         </div>
-                        <div className="absolute bottom-full right-0 mb-2 w-64 bg-slate-900 border border-slate-700 shadow-xl rounded-xl p-4 text-xs text-slate-300 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
-                          <div className="font-bold text-white mb-2 pb-2 border-b border-slate-700">Detailed Cost Protocol</div>
-                          <div className="flex justify-between mb-1">
-                            <span>1. Entwurf:</span>
-                            <span className="font-mono text-emerald-400">${(book.kosten_protokoll.entwurf?.cost || 0).toFixed(4)}</span>
+                        {currentUser?.email === ADMIN_EMAIL && (
+                          <div className="absolute bottom-full right-0 mb-2 w-64 bg-slate-900 border border-slate-700 shadow-xl rounded-xl p-4 text-xs text-slate-300 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                            <div className="font-bold text-white mb-2 pb-2 border-b border-slate-700">Detailed Cost Protocol</div>
+                            <div className="flex justify-between mb-1">
+                              <span>1. Entwurf:</span>
+                              <span className="font-mono text-emerald-400">${(book.kosten_protokoll.entwurf?.cost || 0).toFixed(4)}</span>
+                            </div>
+                            <div className="flex justify-between mb-1">
+                              <span>2. Ausarbeitung:</span>
+                              <span className="font-mono text-emerald-400">${(book.kosten_protokoll.ausarbeitung?.cost || 0).toFixed(4)}</span>
+                            </div>
+                            <div className="flex justify-between mb-1">
+                              <span>2.5 Lektorat:</span>
+                              <span className="font-mono text-emerald-400">${(book.kosten_protokoll.lektorat?.cost || 0).toFixed(4)}</span>
+                            </div>
+                            <div className="flex justify-between pt-1 mt-1 border-t border-slate-700/50">
+                              <span>3. Bilder ({book.kosten_protokoll.bilder?.anzahl || 0}x):</span>
+                              <span className="font-mono text-emerald-400">${(book.kosten_protokoll.bilder?.cost || 0).toFixed(4)}</span>
+                            </div>
                           </div>
-                          <div className="flex justify-between mb-1">
-                            <span>2. Ausarbeitung:</span>
-                            <span className="font-mono text-emerald-400">${(book.kosten_protokoll.ausarbeitung?.cost || 0).toFixed(4)}</span>
-                          </div>
-                          <div className="flex justify-between mb-1">
-                            <span>2.5 Lektorat:</span>
-                            <span className="font-mono text-emerald-400">${(book.kosten_protokoll.lektorat?.cost || 0).toFixed(4)}</span>
-                          </div>
-                          <div className="flex justify-between pt-1 mt-1 border-t border-slate-700/50">
-                            <span>3. Bilder ({book.kosten_protokoll.bilder?.anzahl || 0}x):</span>
-                            <span className="font-mono text-emerald-400">${(book.kosten_protokoll.bilder?.cost || 0).toFixed(4)}</span>
-                          </div>
-                        </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -2727,7 +2779,7 @@ Your output MUST have exactly this JSON format:
                   ☁️ <span className="hidden sm:inline">In Cloud speichern</span>
                 </button>
               )}
-              {currentUser?.email === ADMIN_EMAIL && (
+              {userData?.role === 'admin' && (
                 <button onClick={(e) => { 
                     e.stopPropagation(); 
                     if (readingBook.pdfUrl) window.open(readingBook.pdfUrl, '_blank');
@@ -3020,7 +3072,7 @@ Your output MUST have exactly this JSON format:
           {userData && (
             <div className="p-4 border-b border-theme-border bg-theme-primary/5 text-center">
               <span className="text-sm font-bold text-theme-primary">
-                {userData.role === 'admin' ? "💎 Magie-Punkte: Unendlich" : `💎 Magie-Punkte: ${userData.credits}`}
+                {currentUser?.email === ADMIN_EMAIL ? "💎 Magie-Punkte: Unendlich" : `💎 Magie-Punkte: ${userData.credits}`}
               </span>
             </div>
           )}
