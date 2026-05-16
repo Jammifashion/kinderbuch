@@ -1849,7 +1849,7 @@ Your output MUST have exactly this JSON format:
                     }}
                   >
                     <div className="relative w-full">
-                      <img src={avatar.imageUrl} alt={avatar.avatarName} className="w-full aspect-square object-cover rounded-3xl shadow-sm border-4 border-theme-bg-softer group-hover:border-theme-primary transition-all duration-300" />
+                      <img src={avatar.imageUrl || undefined} alt={avatar.avatarName} className="w-full aspect-square object-cover rounded-3xl shadow-sm border-4 border-theme-bg-softer group-hover:border-theme-primary transition-all duration-300" />
                       <div className={`absolute inset-0 rounded-3xl bg-theme-primary/10 transition-opacity flex items-center justify-center ${editingHeroId === avatar.id ? 'opacity-0' : 'opacity-0 group-hover:opacity-100'}`}>
                         <span className="bg-white text-theme-primary font-bold px-3 py-1 rounded-full shadow text-xs">Aussuchen</span>
                       </div>
@@ -1950,7 +1950,7 @@ Your output MUST have exactly this JSON format:
                         className={`min-w-[80px] w-20 flex flex-col items-center gap-2 cursor-pointer transition-all snap-start ${selectedAvatarId === avatar.id ? 'scale-110 opacity-100' : 'opacity-60 hover:opacity-100'}`}
                         title={avatar.avatarName}
                       >
-                        <img src={avatar.imageUrl} alt={avatar.avatarName} className={`w-20 h-20 rounded-2xl object-cover border-4 ${selectedAvatarId === avatar.id ? 'border-theme-primary shadow-lg' : 'border-transparent shadow-sm'}`} />
+                        <img src={avatar.imageUrl || undefined} alt={avatar.avatarName} className={`w-20 h-20 rounded-2xl object-cover border-4 ${selectedAvatarId === avatar.id ? 'border-theme-primary shadow-lg' : 'border-transparent shadow-sm'}`} />
                         <span className={`text-[10px] font-bold text-center truncate w-full px-1 ${selectedAvatarId === avatar.id ? 'text-theme-primary-strong' : 'text-theme-muted'}`}>{avatar.avatarName}</span>
                       </div>
                     ))}
@@ -2080,7 +2080,7 @@ Your output MUST have exactly this JSON format:
                             <p className="text-[10px] text-center px-1">Nano Banana 2 zeichnet {result.hauptcharakter.name}...</p>
                           </div>
                         ) : result.hauptcharakter.avatar_url ? (
-                          <img src={result.hauptcharakter.avatar_url} alt="Held" className="w-full h-full object-cover" />
+                          <img src={result.hauptcharakter.avatar_url || undefined} alt="Held" className="w-full h-full object-cover" />
                         ) : (
                           <button 
                             onClick={async () => {
@@ -2162,7 +2162,7 @@ Your output MUST have exactly this JSON format:
             {allBooks.map(book => (
               <div key={book.id} className="relative rounded-[30px] bg-theme-card p-6 shadow-sm border border-theme-border flex flex-col gap-4">
                 <input type="checkbox" onChange={() => handleToggleSelectBook(book.id)} checked={selectedBooks.has(book.id)} className="absolute top-4 left-4" />
-                <img src={book.hauptcharakter.avatar_url || ''} alt="" onClick={() => setEditingBook(book)} className="w-full h-40 object-cover rounded-2xl bg-theme-bg-softer cursor-pointer" />
+                <img src={book.hauptcharakter.avatar_url || undefined} alt="" onClick={() => setEditingBook(book)} className="w-full h-40 object-cover rounded-2xl bg-theme-bg-softer cursor-pointer" />
                 <h3 className="font-bold text-lg">{book.ausgewaehlter_titel || t('library.untitled')}</h3>
                 <div className="flex justify-between items-center text-sm font-bold text-theme-muted">
                   <span>{book.created_at ? new Date(book.created_at.seconds * 1000).toLocaleDateString() : t('library.unknown_date')}</span>
@@ -2239,7 +2239,7 @@ Your output MUST have exactly this JSON format:
                   >
                     🗑️
                   </button>
-                  <img src={book.coverImage || ''} alt="Cover" className="w-full h-48 object-cover rounded-2xl bg-amber-50" />
+                  <img src={book.coverImage || undefined} alt="Cover" className="w-full h-48 object-cover rounded-2xl bg-amber-50" />
                   <h3 className="font-bold text-xl text-theme-base">{book.titel}</h3>
                   <div className="flex flex-wrap gap-2 items-center">
                     <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-2 py-1 rounded-md">{getTranslatedLabel('zielalter', book.zielalter)}</span>
@@ -2513,7 +2513,7 @@ Your output MUST have exactly this JSON format:
                 <h4 className="font-bold text-theme-muted uppercase tracking-widest text-xs">Charakter Avatar</h4>
                 {editingBook.hauptcharakter.avatar_url ? (
                   <img 
-                    src={editingBook.hauptcharakter.avatar_url} 
+                    src={editingBook.hauptcharakter.avatar_url || undefined} 
                     alt="Charakter Avatar" 
                     className="w-48 h-48 object-cover rounded-[24px] shadow-sm mb-2"
                   />
@@ -2672,7 +2672,7 @@ Your output MUST have exactly this JSON format:
                       >
                         <div className="flex-1 bg-slate-900 overflow-hidden relative shadow-2xl rounded-[32px]">
                            {seite.imageUrl ? (
-                              <img src={seite.imageUrl} alt={`Seite ${idx + 1}`} className="w-full h-full object-cover" loading="lazy" />
+                              <img src={seite.imageUrl || undefined} alt={`Seite ${idx + 1}`} className="w-full h-full object-cover" loading="lazy" />
                             ) : (
                                <div className="flex flex-col items-center justify-center h-full w-full bg-theme-bg-softer text-theme-muted p-6 text-center italic">
                                   "{seite.imagePrompt}"
@@ -2729,7 +2729,7 @@ Your output MUST have exactly this JSON format:
                       {isGeneratingBook ? (
                         <div className="bg-theme-bg-softer w-full h-full flex items-center justify-center animate-pulse text-4xl">🎨</div>
                       ) : seite.imageUrl ? (
-                        <img src={seite.imageUrl} alt={`Seite ${idx + 1}`} className="w-full h-full object-cover" loading="lazy" />
+                        <img src={seite.imageUrl || undefined} alt={`Seite ${idx + 1}`} className="w-full h-full object-cover" loading="lazy" />
                       ) : (
                          <div className="bg-theme-bg-soft w-full h-full flex items-center justify-center text-slate-300 text-4xl border-2 border-dashed border-theme-border-strong">🖼️</div>
                       )}

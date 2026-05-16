@@ -18,8 +18,12 @@ try {
     firebaseConfig = JSON.parse(configContent);
   }
 } catch (e) {
-  console.log("Could not load local firebase config, skipping.");
+  console.log("Could not load local firebase config, checking environment variables.");
 }
+
+// Fallback to environment variables if config file didn't provide them
+const projectId = firebaseConfig.projectId || process.env.VITE_FIREBASE_PROJECT_ID;
+const storageBucket = firebaseConfig.storageBucket || process.env.VITE_FIREBASE_STORAGE_BUCKET;
 
 // Initialize Firebase Admin
 let db: any;
@@ -33,9 +37,8 @@ function initFirebase() {
       credential: admin.credential.applicationDefault()
     };
 
-    // Always inject overrides if we found a local config
-    if (firebaseConfig.projectId) options.projectId = firebaseConfig.projectId;
-    if (firebaseConfig.storageBucket) options.storageBucket = firebaseConfig.storageBucket;
+    if (projectId) options.projectId = projectId;
+    if (storageBucket) options.storageBucket = storageBucket;
 
     admin.initializeApp(options);
     console.log("Firebase Admin initialized successfully.");
