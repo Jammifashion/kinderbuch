@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from '@google/genai';
 import { db, auth, storage } from './lib/firebase';
 import { useLanguage } from './LanguageContext';
 import { collection, addDoc, serverTimestamp, getDocs, updateDoc, doc, deleteDoc, getDoc, setDoc, query, where, onSnapshot } from 'firebase/firestore';
@@ -18,6 +18,16 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 const MODEL_NAME = 'gemini-2.5-flash';
 const IMAGE_MODEL = 'gemini-2.5-flash-image';
 const ADMIN_EMAIL = 'gbr@jammifashion.de'; 
+
+const childFriendlySafetySettings = [
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE }
+];
+
+const childFriendlySystemInstruction = "Du bist ein liebevoller Kinderbuch-Autor. Alltägliche Themen wie Arztbesuche, Kranksein, Traurigkeit oder kleine Geheimnisse sind absolut erlaubt und erwünscht. Blockiere nur echte Gewalt, Hassrede oder nicht-kindgerechte Inhalte.";
+
 const ALLOWED_EMAILS = [
   'gbr@jammifashion.de',
   'deine.email@gmail.com',
@@ -968,6 +978,10 @@ export default function App() {
       const response = await ai.models.generateContent({
         model: MODEL_NAME,
         contents: { parts: [{ text: prompt }] },
+        config: {
+          safetySettings: childFriendlySafetySettings,
+          systemInstruction: childFriendlySystemInstruction
+        }
       });
 
       if (response.text) {
@@ -1003,7 +1017,8 @@ export default function App() {
         model: MODEL_NAME,
         contents: safetyPrompt,
         config: {
-          systemInstruction: "You are a strict youth protection filter for children aged 2 to 8 years."
+          systemInstruction: "You are a child safety filter.",
+          safetySettings: childFriendlySafetySettings
         }
       });
       if (safetyRes.text && safetyRes.text.trim().toUpperCase().includes('UNSAFE')) {
@@ -1040,7 +1055,8 @@ export default function App() {
         model: MODEL_NAME,
         contents: prompt,
         config: {
-          systemInstruction: `IRREVERSIBLE RULE: Only youth-friendly, positive and educationally valuable content for children between 2 and 8 years of age may be generated. Targeted language: ${language.toUpperCase()}.`
+          systemInstruction: `Only youth-friendly, positive and educationally valuable content for children between 2 and 8 years of age may be generated. Targeted language: ${language.toUpperCase()}.\n\n${childFriendlySystemInstruction}`,
+          safetySettings: childFriendlySafetySettings
         }
       });
 
@@ -1062,7 +1078,8 @@ export default function App() {
           erzeugteBuecherCount: 0,
           original_idea: idea,
           created_at: serverTimestamp(),
-          status: 'draft'
+          status: 'draft',
+          createdByUser: currentUser?.email
         });
         const bookId = docRef.id;
         
@@ -1408,7 +1425,14 @@ export default function App() {
     try {
       // 0. PRE-CHECK
       const safetyPrompt = `Bewerte die folgende Eingabe auf Kindersicherheit. Enthält sie sensible, gewalttätige, beängstigende, drogenbezogene, diskriminierende oder sexuelle Inhalte? Antworte NUR mit "UNSAFE", wenn sie ungeeignet ist, sonst mit "SAFE".\nEingabe: "${prompt}"`;
-      const safetyRes = await ai.models.generateContent({ model: MODEL_NAME, contents: safetyPrompt });
+      const safetyRes = await ai.models.generateContent({ 
+        model: MODEL_NAME, 
+        contents: safetyPrompt,
+        config: {
+          safetySettings: childFriendlySafetySettings,
+          systemInstruction: childFriendlySystemInstruction
+        }
+      });
       if (safetyRes.text && safetyRes.text.trim().toUpperCase().includes('UNSAFE')) {
         throw new Error("Ups! Dieser Inhalt ist für ein friedliches Kinderbuch leider nicht geeignet. Lass uns lieber ein schönes, positives Abenteuer erleben! 🌟");
       }
@@ -1612,7 +1636,8 @@ Your output MUST have exactly this JSON format:
         },
         config: {
           responseMimeType: "application/json",
-          systemInstruction: `IRREVERSIBLE RULE: Only youth-friendly, positive and educationally valuable content for children between 2 and 8 years of age may be generated. Language: ${language.toUpperCase()}.`
+          systemInstruction: `Only youth-friendly, positive and educationally valuable content for children between 2 and 8 years of age may be generated. Language: ${language.toUpperCase()}.\n\n${childFriendlySystemInstruction}`,
+          safetySettings: childFriendlySafetySettings
         }
       });
       
@@ -1638,7 +1663,8 @@ Your output MUST have exactly this JSON format:
         },
         config: {
           responseMimeType: "application/json",
-          systemInstruction: `You are a professional children's book editor. Your task is to stylistically, grammatically and educationally polish the existing book JSON in ${language.toUpperCase()}. Optimize the text smoothly for the target group ${zielalter}, correct sentence structures and make the choice of words even more magical. Never change the JSON structure, the number of pages or the fields (especially 'pageNumber', 'layoutType', 'imagePrompt'). RETURN EXCLUSIVELY THE CORRECTED JSON.`
+          systemInstruction: `You are a professional children's book editor. Your task is to stylistically, grammatically and educationally polish the existing book JSON in ${language.toUpperCase()}. Optimize the text smoothly for the target group ${zielalter}, correct sentence structures and make the choice of words even more magical. Never change the JSON structure, the number of pages or the fields (especially 'pageNumber', 'layoutType', 'imagePrompt'). RETURN EXCLUSIVELY THE CORRECTED JSON.\n\n${childFriendlySystemInstruction}`,
+          safetySettings: childFriendlySafetySettings
         }
       });
 
