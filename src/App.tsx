@@ -7,7 +7,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { db, auth, storage } from './lib/firebase';
 import { useLanguage } from './LanguageContext';
-import { collection, addDoc, serverTimestamp, getDocs, updateDoc, doc, deleteDoc, getDoc, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, getDocs, updateDoc, doc, deleteDoc, getDoc, setDoc, query, where, onSnapshot } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -21,7 +21,8 @@ const ADMIN_EMAIL = 'gbr@jammifashion.de';
 const ALLOWED_EMAILS = [
   'gbr@jammifashion.de',
   'deine.email@gmail.com',
-  'freund@test.de'
+  'freund@test.de',
+  'christianjammi@gmail.com'
 ].map(e => e.toLowerCase());
 
 enum OperationType {
@@ -149,9 +150,17 @@ export interface Avatar {
   createdAt: any;
 }
 
+export interface UserData {
+  uid: string;
+  email: string | null;
+  credits: number;
+  role: 'user' | 'admin';
+}
+
 export default function App() {
   const { language, setLanguage, t } = useLanguage();
   const [user, setUser] = useState<User | null>(null);
+  const [userData, setUserData] = useState<UserData | null>(null);
   const [allBooks, setAllBooks] = useState<StoryResult[]>([]);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'create' | 'library' | 'books'>('dashboard');
   const [isDevMode, setIsDevMode] = useState(false);
@@ -234,6 +243,33 @@ export default function App() {
     document.documentElement.setAttribute('data-theme', currentTheme);
     localStorage.setItem('jammi_theme', currentTheme);
   }, [currentTheme]);
+
+  const canPerformAction = () => {
+    if (isDevMode) return true;
+    if (!userData) return false;
+    if (userData.role === 'admin') return true;
+    return userData.credits > 0;
+  };
+
+  const deductCredit = async () => {
+    if (isDevMode || !userData || userData.role === 'admin') return;
+    try {
+      const newCredits = Math.max(0, userData.credits - 1);
+      await updateDoc(doc(db, 'users', userData.uid), { credits: newCredits });
+      setUserData(prev => prev ? { ...prev, credits: newCredits } : null);
+    } catch (err) {
+      console.error("Error deducting credits:", err);
+    }
+  };
+
+  const OutOfCreditsMessage = () => {
+    if (canPerformAction()) return null;
+    return (
+      <div className="mt-4 rounded-xl bg-red-100 p-4 text-red-800 border border-red-200 font-bold text-center">
+        Deine Magie-Punkte sind für heute aufgebraucht!
+      </div>
+    );
+  };
 
   const stats = useMemo(() => {
     const thirtyDaysAgo = new Date();
@@ -548,12 +584,44 @@ export default function App() {
       setUser(authUser);
       setWhitelistError(null);
       if (authUser) {
+        try {
+          const userDocRef = doc(db, 'users', authUser.uid);
+          const userDocSnap = await getDoc(userDocRef);
+          
+          let currentUserData: UserData;
+          if (userDocSnap.exists()) {
+            const data = userDocSnap.data();
+            currentUserData = {
+              uid: authUser.uid,
+              email: authUser.email,
+              credits: data.credits !== undefined ? data.credits : 10,
+              role: data.role !== undefined ? data.role : (authUser.email === ADMIN_EMAIL ? 'admin' : 'user')
+            };
+            if (data.credits === undefined || data.role === undefined) {
+              await setDoc(userDocRef, { credits: currentUserData.credits, role: currentUserData.role }, { merge: true });
+            }
+          } else {
+            currentUserData = {
+              uid: authUser.uid,
+              email: authUser.email,
+              credits: 10,
+              role: authUser.email === ADMIN_EMAIL ? 'admin' : 'user'
+            };
+            await setDoc(userDocRef, currentUserData);
+          }
+          setUserData(currentUserData);
+        } catch (err) {
+          console.error("Error fetching/initializing user data:", err);
+        }
+
         fetchBooks();
         fetchFinishedBooks();
         fetchAvatars(authUser.uid);
         if (authUser.email === ADMIN_EMAIL) {
           checkAndCreateAutoBackup();
         }
+      } else {
+        setUserData(null);
       }
     });
   }, [t]);
@@ -676,6 +744,8 @@ export default function App() {
             createdAt: serverTimestamp()
           });
 
+          await deductCredit();
+
           setSelectedAvatarId(docRef.id);
           setPlushName(""); // Reset
           fetchAvatars(isDevMode ? 'dev-user' : currentUser?.uid || '');
@@ -731,8 +801,9 @@ export default function App() {
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
-    } catch (err) {
-      setError('Login fehlgeschlagen. Bitte versuche es noch einmal.');
+    } catch (err: any) {
+      console.error("[Login Error]", err);
+      setError(`Login fehlgeschlagen. Bitte versuche es noch einmal. (${err.message})`);
     }
   };
 
@@ -1619,6 +1690,8 @@ Your output MUST have exactly this JSON format:
       const newCount = count + 1;
       await updateDoc(doc(db, 'buecher', selectedSkriptForBook.id), { erzeugteBuecherCount: newCount });
 
+      await deductCredit();
+
       const finalizedBook = { id: docRef.id, ...newBookData, seiten: pages, kosten_protokoll: kostenProtokoll } as AusgearbeitetesBuch;
       
       setSelectedSkriptForBook(null);
@@ -1758,11 +1831,19 @@ Your output MUST have exactly this JSON format:
         </div>
         
         {/* Navigation Wrapper */}
-        <div className="flex items-center gap-4">
-          {/* Desktop Buttons */}
-          <div className="hidden md:flex gap-3">
-            <button 
-              onClick={() => setIsBackupManagerOpen(true)} 
+        <div className="flex flex-col items-center gap-4">
+          {userData && (
+            <div className="flex items-center justify-center px-4 py-1.5 bg-theme-primary/10 rounded-full border border-theme-primary/30">
+              <span className="text-sm font-bold text-theme-primary">
+                {userData.role === 'admin' ? "💎 Magie-Punkte: Unendlich" : `💎 Magie-Punkte: ${userData.credits}`}
+              </span>
+            </div>
+          )}
+          <div className="flex items-center gap-4">
+            {/* Desktop Buttons */}
+            <div className="hidden md:flex gap-3">
+              <button 
+                onClick={() => setIsBackupManagerOpen(true)} 
               className="rounded-full bg-theme-card border border-theme-primary-soft flex items-center justify-center w-10 h-10 text-xl shadow-sm hover:bg-theme-primary-softer transition-all cursor-pointer" 
               title={t('dashboard.backup_manager')}
             >
@@ -1784,6 +1865,7 @@ Your output MUST have exactly this JSON format:
             <span>{t('common.menu')}</span>
             <span className="text-lg">☰</span>
           </button>
+        </div>
         </div>
       </header>
       
@@ -1818,13 +1900,14 @@ Your output MUST have exactly this JSON format:
                   />
                   <button 
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={isUploadingPlush || !plushName.trim()}
+                    disabled={isUploadingPlush || !plushName.trim() || !canPerformAction()}
                     className="px-6 py-3 bg-theme-primary text-white font-bold rounded-full shadow-md hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 active:shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                   >
                     <span className="text-xl">🧸</span> 
                     {isUploadingPlush ? 'Wird verzaubert...' : 'Foto hochladen'}
                   </button>
                 </div>
+                <OutOfCreditsMessage />
               </div>
             </div>
             {uploadError && (
@@ -1861,17 +1944,35 @@ Your output MUST have exactly this JSON format:
                           type="text" 
                           value={editingHeroName}
                           onChange={(e) => setEditingHeroName(e.target.value)}
-                          onKeyDown={async (e) => {
+                          onKeyDown={async (e: React.KeyboardEvent<HTMLInputElement>) => {
                             if (e.key === 'Enter') {
-                              await updateDoc(doc(db, 'avatars', avatar.id), { avatarName: editingHeroName });
-                              setEditingHeroId(null);
+                              try {
+                                const newName = editingHeroName.trim();
+                                if (!newName) return;
+                                
+                                await updateDoc(doc(db, 'avatars', avatar.id), { avatarName: newName });
+                                setSavedAvatars(prev => prev.map(a => a.id === avatar.id ? { ...a, avatarName: newName } : a));
+                                setEditingHeroId(null);
+                              } catch (err: any) {
+                                handleFirestoreError(err, OperationType.UPDATE, `avatars/${avatar.id}`);
+                                setError("Name konnte nicht gespeichert werden.");
+                              }
                             } else if (e.key === 'Escape') {
                               setEditingHeroId(null);
                             }
                           }}
                           onBlur={async () => {
-                            await updateDoc(doc(db, 'avatars', avatar.id), { avatarName: editingHeroName });
-                            setEditingHeroId(null);
+                            if (editingHeroId !== avatar.id) return;
+                            try {
+                              const newName = editingHeroName.trim();
+                              if (newName && avatar.avatarName !== newName) {
+                                await updateDoc(doc(db, 'avatars', avatar.id), { avatarName: newName });
+                                setSavedAvatars(prev => prev.map(a => a.id === avatar.id ? { ...a, avatarName: newName } : a));
+                              }
+                              setEditingHeroId(null);
+                            } catch (err: any) {
+                              handleFirestoreError(err, OperationType.UPDATE, `avatars/${avatar.id}`);
+                            }
                           }}
                           className="w-full text-center border-b-2 border-theme-primary outline-none bg-transparent font-bold text-sm"
                         />
@@ -1927,12 +2028,15 @@ Your output MUST have exactly this JSON format:
                     />
                     <button 
                       onClick={() => fileInputRef.current?.click()}
-                      disabled={isUploadingPlush || !plushName.trim()}
+                      disabled={isUploadingPlush || !plushName.trim() || !canPerformAction()}
                       className="whitespace-nowrap text-xs bg-theme-primary/10 text-theme-primary-strong px-3 py-1.5 rounded-full font-bold hover:bg-theme-primary/20 transition-colors flex items-center gap-1 disabled:opacity-50"
                     >
                       <span>🧸</span> {isUploadingPlush ? '...' : 'Foto hochladen'}
                     </button>
                   </div>
+                </div>
+                <div className="mb-2">
+                  <OutOfCreditsMessage />
                 </div>
                 {uploadError && (
                   <div className="mb-3 p-3 bg-red-100 border border-red-200 text-red-700 rounded-xl text-xs font-bold">
@@ -1968,11 +2072,12 @@ Your output MUST have exactly this JSON format:
               <button
                 id="generateButton"
                 onClick={handleGenerate}
-                disabled={isLoading || !idea}
+                disabled={isLoading || !idea || !canPerformAction()}
                 className="mt-6 w-full rounded-3xl bg-theme-primary py-5 text-xl font-bold text-white transition-all shadow-[0_8px_0_rgb(194,65,12)] active:translate-y-1 active:shadow-none disabled:bg-slate-300 disabled:shadow-none"
               >
                 {isLoading ? t('create.generate_loading') : t('create.generate_btn')}
               </button>
+              <OutOfCreditsMessage />
             </div>
             {error && (
               <div className="mb-6 rounded-2xl bg-red-100 p-4 text-red-800 border border-red-200">
@@ -2378,15 +2483,18 @@ Your output MUST have exactly this JSON format:
                 </select>
               </div>
 
-              <div className="flex gap-4 mt-8 pt-6 border-t border-theme-border">
-                <button onClick={() => setSelectedSkriptForBook(null)} className="flex-1 rounded-full bg-theme-bg-softer py-3 font-bold text-theme-muted-strong hover:bg-theme-bg-mute cursor-pointer">{t('common.cancel')}</button>
-                <button 
-                  onClick={handleGenerateBook} 
-                  disabled={isGeneratingBook}
-                  className="flex-[2] rounded-full bg-indigo-500 py-3 font-bold text-white shadow-[0_4px_0_rgb(67,56,202)] hover:bg-indigo-600 active:translate-y-1 active:shadow-none cursor-pointer border border-indigo-400 disabled:opacity-50 disabled:translate-y-1 disabled:shadow-none"
-                >
-                  {isGeneratingBook ? t('common.loading') : t('create.generate_book_btn')}
-                </button>
+              <div className="flex flex-col gap-4 mt-8 pt-6 border-t border-theme-border">
+                <OutOfCreditsMessage />
+                <div className="flex gap-4">
+                  <button onClick={() => setSelectedSkriptForBook(null)} className="flex-1 rounded-full bg-theme-bg-softer py-3 font-bold text-theme-muted-strong hover:bg-theme-bg-mute cursor-pointer">{t('common.cancel')}</button>
+                  <button 
+                    onClick={handleGenerateBook} 
+                    disabled={isGeneratingBook || !canPerformAction()}
+                    className="flex-[2] rounded-full bg-indigo-500 py-3 font-bold text-white shadow-[0_4px_0_rgb(67,56,202)] hover:bg-indigo-600 active:translate-y-1 active:shadow-none cursor-pointer border border-indigo-400 disabled:opacity-50 disabled:translate-y-1 disabled:shadow-none"
+                  >
+                    {isGeneratingBook ? t('common.loading') : t('create.generate_book_btn')}
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -2909,6 +3017,13 @@ Your output MUST have exactly this JSON format:
             <h2 className="font-magic text-theme-primary text-2xl tracking-normal">Fably</h2>
             <button onClick={() => setIsMobileMenuOpen(false)} className="text-theme-muted text-2xl hover:text-theme-base transition px-2">×</button>
           </div>
+          {userData && (
+            <div className="p-4 border-b border-theme-border bg-theme-primary/5 text-center">
+              <span className="text-sm font-bold text-theme-primary">
+                {userData.role === 'admin' ? "💎 Magie-Punkte: Unendlich" : `💎 Magie-Punkte: ${userData.credits}`}
+              </span>
+            </div>
+          )}
           <div className="flex flex-col gap-2 p-4 flex-1 overflow-y-auto">
             <button onClick={() => { setActiveTab('create'); setIsMobileMenuOpen(false); }} className={`p-4 font-bold rounded-2xl flex items-center gap-3 transition-colors text-left ${activeTab === 'create' ? 'bg-theme-primary-soft text-theme-primary-strong' : 'bg-theme-bg-soft text-theme-muted hover:bg-theme-bg-softer'}`}>
               <span className="text-xl">📖</span> Neue Geschichte
