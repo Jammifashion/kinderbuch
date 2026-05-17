@@ -327,7 +327,7 @@ async function startServer() {
       }
       const aiServer = new GoogleGenAI({ apiKey });
       
-      const analysisPrompt = `Analyze this plush toy. Its name is ${plushName || 'the plush toy'}. Describe its species, main colors, textures, and any unique features (like a hat or a scarf). Create a detailed prompt in English for a perfect digital character illustration based on this toy. Output ONLY the English prompt.`;
+      const analysisPrompt = `Analyze this plush toy. Its name is ${plushName || 'the plush toy'}. Describe its species, main colors, textures, and any unique features (like a hat or a scarf). Create a detailed prompt in English for a perfect 2D vector cartoon character illustration based on this toy. Ensure the prompt explicitly asks for a 2D flat cartoon style and strictly forbids 3D or realistic styles. Output ONLY the English prompt.`;
       
       const analysisResponse = await aiServer.models.generateContent({
         model: 'gemini-3.1-pro-preview',
@@ -351,7 +351,7 @@ async function startServer() {
       generatedPromptEn = generatedPromptEn.replace(/^```(\w+)?\n/g, '').replace(/\n```$/g, '').trim();
 
       // 3. Image Generation
-      const finalPrompt = generatedPromptEn + ", absolutely no text, no letters, no words, no typography, no signatures, clean character digital art style, perfect illustration";
+      const finalPrompt = generatedPromptEn + ", absolutely no text, no letters, no words, no typography, no signatures, 2D flat cartoon vector illustration style, vibrant colors, clean white background, no 3D elements, no realistic shading, solid colors, cute children book style";
       console.log(`[Verzaubern] Prompt being sent: "${finalPrompt}"`);
 
       const imgResponse = await aiServer.models.generateContent({

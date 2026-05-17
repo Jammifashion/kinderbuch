@@ -707,6 +707,11 @@ export default function App() {
       const q = query(collection(db, 'buecher'), where('createdByUser', '==', currentUser.email));
       const querySnapshot = await getDocs(q);
       const books = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StoryResult));
+      books.sort((a, b) => {
+        const timeA = a.created_at?.seconds || 0;
+        const timeB = b.created_at?.seconds || 0;
+        return timeB - timeA;
+      });
       setAllBooks(books);
     } catch (err) {
       console.error("Error fetching books:", err);
@@ -719,6 +724,11 @@ export default function App() {
       const q = query(collection(db, 'ausgearbeitete_buecher'), where('createdByUser', '==', currentUser.email));
       const querySnapshot = await getDocs(q);
       const books = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AusgearbeitetesBuch));
+      books.sort((a, b) => {
+        const timeA = a.created_at?.seconds || 0;
+        const timeB = b.created_at?.seconds || 0;
+        return timeB - timeA;
+      });
       setAllFinishedBooks(books);
     } catch (err) {
       console.error("Error fetching finished books:", err);
@@ -727,12 +737,15 @@ export default function App() {
 
   const fetchAvatars = async (uid: string) => {
     try {
-      // In development mode, we might be pretending to be dev-user, but wait: isDevMode handles currentUser, let's use the effective uid
       const effectiveUid = isDevMode ? 'dev-user' : uid;
       const q = query(collection(db, 'avatars'), where('userId', '==', effectiveUid));
       const querySnapshot = await getDocs(q);
       const avatars = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Avatar));
-      setSavedAvatars(avatars.sort((a,b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0)));
+      setSavedAvatars(avatars.sort((a,b) => {
+        const timeA = a.createdAt?.toMillis?.() || a.createdAt?.seconds * 1000 || Date.now();
+        const timeB = b.createdAt?.toMillis?.() || b.createdAt?.seconds * 1000 || Date.now();
+        return timeB - timeA;
+      }));
     } catch (err) {
       console.error("Error fetching avatars:", err);
     }
@@ -1798,7 +1811,7 @@ Your output MUST have exactly this JSON format:
       {showOnboarding && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" />
-          <div className="relative w-full max-w-lg bg-theme-card rounded-[40px] shadow-2xl p-8 md:p-12 text-center animate-in zoom-in-95 duration-500 overflow-hidden">
+          <div className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto bg-theme-card rounded-[40px] shadow-2xl p-8 md:p-12 text-center animate-in zoom-in-95 duration-500">
             {/* Playful background blobs */}
             <div className="absolute top-0 left-0 w-32 h-32 bg-amber-200/50 rounded-full blur-3xl -translate-x-1/2 -translate-y-1/2 pointer-events-none" />
             <div className="absolute bottom-0 right-0 w-40 h-40 bg-orange-200/50 rounded-full blur-3xl translate-x-1/4 translate-y-1/4 pointer-events-none" />
@@ -1962,25 +1975,27 @@ Your output MUST have exactly this JSON format:
           <div className="mb-8 rounded-[40px] bg-theme-card p-8 shadow-xl border-4 border-theme-primary-softer">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
               <h2 className="text-2xl font-bold text-theme-title">Deine Helden-Galerie</h2>
-              <div className="flex flex-col items-end gap-2">
-                <div className="flex items-center gap-2">
+              <div className="flex flex-col w-full sm:w-auto items-stretch sm:items-end gap-2">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                   <input 
                     type="text" 
                     placeholder="Name des Kuscheltiers" 
                     value={plushName} 
                     onChange={e => setPlushName(e.target.value)} 
-                    className="border border-theme-border rounded-full px-4 py-3 focus:outline-none focus:border-theme-primary"
+                    className="border border-theme-border rounded-full px-4 py-3 focus:outline-none focus:border-theme-primary w-full sm:w-auto"
                   />
                   <button 
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isUploadingPlush || !plushName.trim() || !canPerformAction()}
-                    className="px-6 py-3 bg-theme-primary text-white font-bold rounded-full shadow-md hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 active:shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    className="px-6 py-3 bg-theme-primary text-white font-bold rounded-full shadow-md hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 active:shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2 whitespace-nowrap"
                   >
                     <span className="text-xl">🧸</span> 
                     {isUploadingPlush ? 'Wird verzaubert...' : 'Foto hochladen'}
                   </button>
                 </div>
-                <OutOfCreditsMessage />
+                <div className="flex justify-center sm:justify-end">
+                  <OutOfCreditsMessage />
+                </div>
               </div>
             </div>
             {uploadError && (
@@ -2089,20 +2104,20 @@ Your output MUST have exactly this JSON format:
               />
               
               <div className="mt-6 mb-2">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3 gap-2">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3 gap-4 sm:gap-2">
                   <h3 className="font-bold text-theme-base text-sm">Oder wähle einen deiner Helden:</h3>
-                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
                     <input 
                       type="text" 
                       placeholder="Name des Kuscheltiers" 
                       value={plushName} 
                       onChange={e => setPlushName(e.target.value)} 
-                      className="text-xs border border-theme-border rounded-full px-3 py-1.5 focus:outline-none focus:border-theme-primary w-full sm:w-auto"
+                      className="text-xs border border-theme-border rounded-full px-3 py-2 sm:py-1.5 focus:outline-none focus:border-theme-primary w-full sm:w-auto"
                     />
                     <button 
                       onClick={() => fileInputRef.current?.click()}
                       disabled={isUploadingPlush || !plushName.trim() || !canPerformAction()}
-                      className="whitespace-nowrap text-xs bg-theme-primary/10 text-theme-primary-strong px-3 py-1.5 rounded-full font-bold hover:bg-theme-primary/20 transition-colors flex items-center gap-1 disabled:opacity-50"
+                      className="whitespace-nowrap text-xs bg-theme-primary/10 text-theme-primary-strong px-4 sm:px-3 py-2 sm:py-1.5 rounded-full font-bold hover:bg-theme-primary/20 transition-colors flex items-center justify-center gap-1 disabled:opacity-50"
                     >
                       <span>🧸</span> {isUploadingPlush ? '...' : 'Foto hochladen'}
                     </button>
