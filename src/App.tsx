@@ -125,6 +125,11 @@ interface StoryResult {
     total_cost_usd: number;
   };
   zielgruppe: string;
+  storyline_optionen?: {
+    anfang: string[];
+    mitte: string[];
+    ende: string[];
+  };
   storyline: {
     anfang: string;
     mitte: string;
@@ -1059,7 +1064,11 @@ export default function App() {
       {
         "titel_optionen": ["...", "...", "..."],
         "zielgruppe": "...",
-        "storyline": { "anfang": "...", "mitte": "...", "ende": "..." },
+        "storyline_optionen": {
+          "anfang": ["Option 1...", "Option 2...", "Option 3..."],
+          "mitte": ["Option 1...", "Option 2...", "Option 3..."],
+          "ende": ["Option 1...", "Option 2...", "Option 3..."]
+        },
         "story_skelett": { "kapitel_1": "...", "kapitel_2": "...", "kapitel_3": "...", "kapitel_4": "...", "kapitel_5": "..." },
         "hauptcharakter": { "name": "...", "gattung": "...", "persoenlichkeit": "...", "hobbys": "...", "lieblingsessen": "...", "aengste": "...", "aussehen_de": "...", "bild_prompt_en": "Example: 'A cute, small baby bear, wearing a bright yellow short-sleeve t-shirt under classic dark blue denim dungarees, a red baseball cap, and tiny white sneakers. Big friendly eyes, cartoon illustration style, vibrant Pixar colors, clean white background, 3d render style.'" }
       }`;
@@ -1077,6 +1086,15 @@ export default function App() {
       const text = response.text || '';
       const cleanJson = text.replace(/```json\n?|\n?```/g, '').trim();
       const storyData: StoryResult = JSON.parse(cleanJson);
+      
+      // Fallback/Init für storyline
+      if (!storyData.storyline) {
+        storyData.storyline = {
+          anfang: storyData.storyline_optionen?.anfang?.[0] || '',
+          mitte: storyData.storyline_optionen?.mitte?.[0] || '',
+          ende: storyData.storyline_optionen?.ende?.[0] || ''
+        };
+      }
       
       if (selectedAvatar) {
         storyData.hauptcharakter.name = selectedAvatar.avatarName;
@@ -2196,30 +2214,95 @@ Your output MUST have exactly this JSON format:
                 <section className="rounded-[40px] bg-theme-card p-8 shadow-md border-2 border-theme-border">
                   <h2 className="mb-6 text-2xl font-bold text-theme-base">Story Kurzskript</h2>
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                    <div className="rounded-3xl bg-yellow-50 p-6 border border-yellow-100">
+                    <div className="rounded-3xl bg-yellow-50 p-6 border border-yellow-100 flex flex-col h-full">
                       <h3 className="text-xs font-bold uppercase tracking-widest text-yellow-600 mb-2">Anfang</h3>
+                      {result.storyline_optionen?.anfang && result.storyline_optionen.anfang.length > 0 && (
+                        <div className="flex flex-col gap-2 mb-4">
+                          {result.storyline_optionen.anfang.map((opt, i) => (
+                             <button
+                               key={i}
+                               onClick={() => {
+                                 setResult({ ...result, storyline: { ...result.storyline, anfang: opt } });
+                                 updateDoc(doc(db, 'buecher', result.id), { 'storyline.anfang': opt });
+                               }}
+                               className={`text-left text-xs p-3 rounded-xl border transition-colors hover:shadow-sm ${
+                                 result.storyline.anfang === opt
+                                   ? 'bg-yellow-200 border-yellow-400 font-bold text-yellow-900 shadow-sm'
+                                   : 'bg-white border-yellow-200 hover:bg-yellow-100 text-yellow-800'
+                               }`}
+                             >
+                               <span className="block font-bold mb-1 opacity-70 uppercase tracking-wider text-[10px]">Option {i + 1}</span>
+                               <span className="line-clamp-3">{opt}</span>
+                             </button>
+                          ))}
+                        </div>
+                      )}
                       <textarea
-                        className="w-full text-sm leading-relaxed text-yellow-900 bg-transparent resize-none outline-none"
+                        className="w-full flex-1 text-sm leading-relaxed text-yellow-900 bg-transparent resize-none outline-none mt-2"
                         rows={6}
                         value={result.storyline.anfang}
                         onChange={(e) => setResult({ ...result, storyline: { ...result.storyline, anfang: e.target.value } })}
                         onBlur={() => updateDoc(doc(db, 'buecher', result.id), { 'storyline.anfang': result.storyline.anfang })}
                       />
                     </div>
-                    <div className="rounded-3xl bg-pink-50 p-6 border border-pink-100">
+                    
+                    <div className="rounded-3xl bg-pink-50 p-6 border border-pink-100 flex flex-col h-full">
                       <h3 className="text-xs font-bold uppercase tracking-widest text-pink-600 mb-2">Mitte</h3>
+                      {result.storyline_optionen?.mitte && result.storyline_optionen.mitte.length > 0 && (
+                        <div className="flex flex-col gap-2 mb-4">
+                          {result.storyline_optionen.mitte.map((opt, i) => (
+                             <button
+                               key={i}
+                               onClick={() => {
+                                 setResult({ ...result, storyline: { ...result.storyline, mitte: opt } });
+                                 updateDoc(doc(db, 'buecher', result.id), { 'storyline.mitte': opt });
+                               }}
+                               className={`text-left text-xs p-3 rounded-xl border transition-colors hover:shadow-sm ${
+                                 result.storyline.mitte === opt
+                                   ? 'bg-pink-200 border-pink-400 font-bold text-pink-900 shadow-sm'
+                                   : 'bg-white border-pink-200 hover:bg-pink-100 text-pink-800'
+                               }`}
+                             >
+                               <span className="block font-bold mb-1 opacity-70 uppercase tracking-wider text-[10px]">Option {i + 1}</span>
+                               <span className="line-clamp-3">{opt}</span>
+                             </button>
+                          ))}
+                        </div>
+                      )}
                       <textarea
-                        className="w-full text-sm leading-relaxed text-pink-900 bg-transparent resize-none outline-none"
+                        className="w-full flex-1 text-sm leading-relaxed text-pink-900 bg-transparent resize-none outline-none mt-2"
                         rows={6}
                         value={result.storyline.mitte}
                         onChange={(e) => setResult({ ...result, storyline: { ...result.storyline, mitte: e.target.value } })}
                         onBlur={() => updateDoc(doc(db, 'buecher', result.id), { 'storyline.mitte': result.storyline.mitte })}
                       />
                     </div>
-                    <div className="rounded-3xl bg-purple-50 p-6 border border-purple-100">
+                    
+                    <div className="rounded-3xl bg-purple-50 p-6 border border-purple-100 flex flex-col h-full">
                       <h3 className="text-xs font-bold uppercase tracking-widest text-purple-600 mb-2">Ende</h3>
+                      {result.storyline_optionen?.ende && result.storyline_optionen.ende.length > 0 && (
+                        <div className="flex flex-col gap-2 mb-4">
+                          {result.storyline_optionen.ende.map((opt, i) => (
+                             <button
+                               key={i}
+                               onClick={() => {
+                                 setResult({ ...result, storyline: { ...result.storyline, ende: opt } });
+                                 updateDoc(doc(db, 'buecher', result.id), { 'storyline.ende': opt });
+                               }}
+                               className={`text-left text-xs p-3 rounded-xl border transition-colors hover:shadow-sm ${
+                                 result.storyline.ende === opt
+                                   ? 'bg-purple-200 border-purple-400 font-bold text-purple-900 shadow-sm'
+                                   : 'bg-white border-purple-200 hover:bg-purple-100 text-purple-800'
+                               }`}
+                             >
+                               <span className="block font-bold mb-1 opacity-70 uppercase tracking-wider text-[10px]">Option {i + 1}</span>
+                               <span className="line-clamp-3">{opt}</span>
+                             </button>
+                          ))}
+                        </div>
+                      )}
                       <textarea
-                        className="w-full text-sm leading-relaxed text-purple-900 bg-transparent resize-none outline-none"
+                        className="w-full flex-1 text-sm leading-relaxed text-purple-900 bg-transparent resize-none outline-none mt-2"
                         rows={6}
                         value={result.storyline.ende}
                         onChange={(e) => setResult({ ...result, storyline: { ...result.storyline, ende: e.target.value } })}
@@ -2653,29 +2736,83 @@ Your output MUST have exactly this JSON format:
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="flex flex-col">
                   <label className="block text-xs font-bold text-yellow-600 mb-2 uppercase tracking-widest">Anfang</label>
+                  {editingBook.storyline_optionen?.anfang && editingBook.storyline_optionen.anfang.length > 0 && (
+                    <div className="flex flex-col gap-2 mb-4">
+                      {editingBook.storyline_optionen.anfang.map((opt, i) => (
+                         <button
+                           key={i}
+                           onClick={() => setEditingBook({...editingBook, storyline: {...editingBook.storyline, anfang: opt}})}
+                           className={`text-left text-xs p-3 rounded-xl border transition-colors hover:shadow-sm ${
+                             editingBook.storyline.anfang === opt
+                               ? 'bg-yellow-200 border-yellow-400 font-bold text-yellow-900 shadow-sm'
+                               : 'bg-white border-yellow-200 hover:bg-yellow-100 text-yellow-800'
+                           }`}
+                         >
+                           <span className="block font-bold mb-1 opacity-70 uppercase tracking-wider text-[10px]">Option {i + 1}</span>
+                           <span className="line-clamp-3">{opt}</span>
+                         </button>
+                      ))}
+                    </div>
+                  )}
                   <textarea 
                     rows={8}
                     value={editingBook.storyline.anfang}
                     onChange={(e) => setEditingBook({...editingBook, storyline: {...editingBook.storyline, anfang: e.target.value}})}
-                    className="w-full flex-1 rounded-2xl bg-yellow-50 border border-yellow-100 p-4 text-sm text-yellow-900 leading-relaxed focus:outline-none focus:ring-2 focus:ring-yellow-300 resize-none"
+                    className="w-full flex-1 rounded-2xl bg-yellow-50 border border-yellow-100 p-4 text-sm text-yellow-900 leading-relaxed focus:outline-none focus:ring-2 focus:ring-yellow-300 resize-none mt-2"
                   />
                 </div>
                 <div className="flex flex-col">
                   <label className="block text-xs font-bold text-pink-600 mb-2 uppercase tracking-widest">Mitte</label>
+                  {editingBook.storyline_optionen?.mitte && editingBook.storyline_optionen.mitte.length > 0 && (
+                    <div className="flex flex-col gap-2 mb-4">
+                      {editingBook.storyline_optionen.mitte.map((opt, i) => (
+                         <button
+                           key={i}
+                           onClick={() => setEditingBook({...editingBook, storyline: {...editingBook.storyline, mitte: opt}})}
+                           className={`text-left text-xs p-3 rounded-xl border transition-colors hover:shadow-sm ${
+                             editingBook.storyline.mitte === opt
+                               ? 'bg-pink-200 border-pink-400 font-bold text-pink-900 shadow-sm'
+                               : 'bg-white border-pink-200 hover:bg-pink-100 text-pink-800'
+                           }`}
+                         >
+                           <span className="block font-bold mb-1 opacity-70 uppercase tracking-wider text-[10px]">Option {i + 1}</span>
+                           <span className="line-clamp-3">{opt}</span>
+                         </button>
+                      ))}
+                    </div>
+                  )}
                   <textarea 
                     rows={8}
                     value={editingBook.storyline.mitte}
                     onChange={(e) => setEditingBook({...editingBook, storyline: {...editingBook.storyline, mitte: e.target.value}})}
-                    className="w-full flex-1 rounded-2xl bg-pink-50 border border-pink-100 p-4 text-sm text-pink-900 leading-relaxed focus:outline-none focus:ring-2 focus:ring-pink-300 resize-none"
+                    className="w-full flex-1 rounded-2xl bg-pink-50 border border-pink-100 p-4 text-sm text-pink-900 leading-relaxed focus:outline-none focus:ring-2 focus:ring-pink-300 resize-none mt-2"
                   />
                 </div>
                 <div className="flex flex-col">
                   <label className="block text-xs font-bold text-purple-600 mb-2 uppercase tracking-widest">Ende</label>
+                  {editingBook.storyline_optionen?.ende && editingBook.storyline_optionen.ende.length > 0 && (
+                    <div className="flex flex-col gap-2 mb-4">
+                      {editingBook.storyline_optionen.ende.map((opt, i) => (
+                         <button
+                           key={i}
+                           onClick={() => setEditingBook({...editingBook, storyline: {...editingBook.storyline, ende: opt}})}
+                           className={`text-left text-xs p-3 rounded-xl border transition-colors hover:shadow-sm ${
+                             editingBook.storyline.ende === opt
+                               ? 'bg-purple-200 border-purple-400 font-bold text-purple-900 shadow-sm'
+                               : 'bg-white border-purple-200 hover:bg-purple-100 text-purple-800'
+                           }`}
+                         >
+                           <span className="block font-bold mb-1 opacity-70 uppercase tracking-wider text-[10px]">Option {i + 1}</span>
+                           <span className="line-clamp-3">{opt}</span>
+                         </button>
+                      ))}
+                    </div>
+                  )}
                   <textarea 
                     rows={8}
                     value={editingBook.storyline.ende}
                     onChange={(e) => setEditingBook({...editingBook, storyline: {...editingBook.storyline, ende: e.target.value}})}
-                    className="w-full flex-1 rounded-2xl bg-purple-50 border border-purple-100 p-4 text-sm text-purple-900 leading-relaxed focus:outline-none focus:ring-2 focus:ring-purple-300 resize-none"
+                    className="w-full flex-1 rounded-2xl bg-purple-50 border border-purple-100 p-4 text-sm text-purple-900 leading-relaxed focus:outline-none focus:ring-2 focus:ring-purple-300 resize-none mt-2"
                   />
                 </div>
               </div>
