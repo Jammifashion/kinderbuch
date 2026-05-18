@@ -115,6 +115,7 @@ export const DEFAULT_LABELS: CustomLabel[] = [
 
 interface StoryResult {
   id: string; // Add ID field
+  created_at?: any;
   titel_optionen: string[];
   ausgewaehlter_titel?: string;
   erzeugteBuecherCount?: number;
@@ -179,6 +180,7 @@ export default function App() {
   const [allBooks, setAllBooks] = useState<StoryResult[]>([]);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'create' | 'library' | 'books'>('dashboard');
   const [isDevMode, setIsDevMode] = useState(false);
+  const currentUser = isDevMode ? { email: ADMIN_EMAIL, uid: 'dev-user' } as unknown as User : user;
   const [idea, setIdea] = useState("");
   const [plushName, setPlushName] = useState("");
   const [editingHeroId, setEditingHeroId] = useState<string | null>(null);
@@ -386,8 +388,7 @@ export default function App() {
 
           const pageImgB64 = await getBase64Image(page.imageUrl || '');
           
-          const age = book.zielalter || '4-6 Jahre';
-          const layoutType = page.layoutType || (age === '6-8 Jahre' ? 'stacked' : (i % 2 === 0 ? 'text-only' : 'image-only'));
+          const layoutType = page.layoutType || (i % 2 === 0 ? 'text-only' : 'image-only');
 
           // Replicate layout from Reader Modal!
           const fontSizeClass = page.text.length < 150 ? 'text-5xl' : (page.text.length < 250 ? 'text-4xl' : 'text-2xl');
@@ -578,10 +579,8 @@ export default function App() {
   useEffect(() => {
     if (bookConfig.zielalter === '2-4 Jahre' && !['8', '12'].includes(bookConfig.seitenAnzahl.toString())) {
       setBookConfig(prev => ({ ...prev, seitenAnzahl: 12 }));
-    } else if (bookConfig.zielalter === '4-6 Jahre' && !['12', '16', '24'].includes(bookConfig.seitenAnzahl.toString())) {
+    } else if (bookConfig.zielalter === '4-6 Jahre' && !['12', '16'].includes(bookConfig.seitenAnzahl.toString())) {
       setBookConfig(prev => ({ ...prev, seitenAnzahl: 16 }));
-    } else if (bookConfig.zielalter === '6-8 Jahre' && !['16', '24'].includes(bookConfig.seitenAnzahl.toString())) {
-      setBookConfig(prev => ({ ...prev, seitenAnzahl: 24 }));
     }
   }, [bookConfig.zielalter]);
 
@@ -630,9 +629,6 @@ export default function App() {
           console.error("Error fetching/initializing user data:", err);
         }
 
-        fetchBooks();
-        fetchFinishedBooks();
-        fetchAvatars(authUser.uid);
         if (authUser.email === ADMIN_EMAIL) {
           checkAndCreateAutoBackup();
         }
@@ -641,6 +637,18 @@ export default function App() {
       }
     });
   }, [t]);
+
+  useEffect(() => {
+    if (currentUser) {
+      fetchBooks();
+      fetchFinishedBooks();
+      fetchAvatars(currentUser.uid);
+    } else {
+      setAllBooks([]);
+      setAllFinishedBooks([]);
+      setSavedAvatars([]);
+    }
+  }, [currentUser?.email, currentUser?.uid, isDevMode]);
 
   const checkAndCreateAutoBackup = async () => {
     try {
@@ -879,8 +887,6 @@ export default function App() {
     fetchFinishedBooks();
     fetchAvatars('dev-user');
   };
-
-  const currentUser = isDevMode ? { email: ADMIN_EMAIL, uid: 'dev-user' } : user;
 
   if (!currentUser) {
     return (
@@ -1634,11 +1640,10 @@ Character: ${JSON.stringify(selectedSkriptForBook.hauptcharakter)}
 Storyline: ${JSON.stringify(selectedSkriptForBook.storyline)}
 
 LAYOUT RULES:
-- For age groups "2-4 Jahre" and "4-6 Jahre": Strictly separate image and text on different pages (layoutType "text-only" or "image-only").
+- Strictly separate image and text on different pages (layoutType "text-only" or "image-only").
   The book MUST alternate between text and image pages (Page 1: Text, Page 2: Image, Page 3: Text...).
   For text pages: Increase narrative depth. The 'imagePrompt' field remains empty ("").
   For image pages: The 'text' field remains empty (""). Generate a high-quality 'imagePrompt'.
-- For age group "6-8 Jahre": Use layoutType "stacked". Here, image AND text are on EVERY page (image top, text bottom).
 
 VISUAL CONSISTENCY:
 - Analyze for each image request separately whether the main character MUST appear.
@@ -2008,7 +2013,7 @@ Your output MUST have exactly this JSON format:
                     className="px-6 py-3 bg-theme-primary text-white font-bold rounded-full shadow-md hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 active:shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2 whitespace-nowrap"
                   >
                     <span className="text-xl">🧸</span> 
-                    {isUploadingPlush ? 'Wird verzaubert...' : 'Foto hochladen'}
+                    {isUploadingPlush ? 'Wird verzaubert...' : 'Foto hochladen (💎 0.15)'}
                   </button>
                 </div>
                 <div className="flex justify-center sm:justify-end">
@@ -2137,7 +2142,7 @@ Your output MUST have exactly this JSON format:
                       disabled={isUploadingPlush || !plushName.trim() || !canPerformAction()}
                       className="whitespace-nowrap text-xs bg-theme-primary/10 text-theme-primary-strong px-4 sm:px-3 py-2 sm:py-1.5 rounded-full font-bold hover:bg-theme-primary/20 transition-colors flex items-center justify-center gap-1 disabled:opacity-50"
                     >
-                      <span>🧸</span> {isUploadingPlush ? '...' : 'Foto hochladen'}
+                      <span>🧸</span> {isUploadingPlush ? '...' : 'Foto hochladen (💎 0.15)'}
                     </button>
                   </div>
                 </div>
@@ -2619,7 +2624,7 @@ Your output MUST have exactly this JSON format:
               <div>
                 <label className="block text-sm font-bold text-theme-muted mb-3">{t('create.age_label')}</label>
                 <div className="flex gap-2">
-                  {['2-4 Jahre', '4-6 Jahre', '6-8 Jahre'].map(alter => (
+                  {['2-4 Jahre', '4-6 Jahre'].map(alter => (
                     <button 
                       key={alter}
                       onClick={() => setBookConfig({ ...bookConfig, zielalter: alter })}
@@ -2653,7 +2658,7 @@ Your output MUST have exactly this JSON format:
                   value={bookConfig.seitenAnzahl}
                   onChange={(e) => setBookConfig({ ...bookConfig, seitenAnzahl: parseInt(e.target.value) })}
                 >
-                  {(bookConfig.zielalter === '2-4 Jahre' ? [8, 12] : bookConfig.zielalter === '4-6 Jahre' ? [12, 16, 24] : [16, 24]).map(num => (
+                  {(bookConfig.zielalter === '2-4 Jahre' ? [8, 12] : [12, 16]).map(num => (
                     <option key={num} value={num}>{num} {t('create.pages_suffix')}</option>
                   ))}
                 </select>
@@ -2668,7 +2673,7 @@ Your output MUST have exactly this JSON format:
                     disabled={isGeneratingBook || !canPerformAction()}
                     className="flex-[2] rounded-full bg-indigo-500 py-3 font-bold text-white shadow-[0_4px_0_rgb(67,56,202)] hover:bg-indigo-600 active:translate-y-1 active:shadow-none cursor-pointer border border-indigo-400 disabled:opacity-50 disabled:translate-y-1 disabled:shadow-none"
                   >
-                    {isGeneratingBook ? t('common.loading') : t('create.generate_book_btn')}
+                    {isGeneratingBook ? t('common.loading') : `${t('create.generate_book_btn')} (💎 ${bookConfig.seitenAnzahl <= 12 ? 0.75 : 1})`}
                   </button>
                 </div>
               </div>
@@ -2998,8 +3003,7 @@ Your output MUST have exactly this JSON format:
                 
                 if (!isRendered) return null;
 
-                const age = readingBook.zielalter || '4-6 Jahre';
-                const layoutType = seite.layoutType || (age === '6-8 Jahre' ? 'stacked' : (idx % 2 === 0 ? 'text-only' : 'image-only'));
+                const layoutType = seite.layoutType || (idx % 2 === 0 ? 'text-only' : 'image-only');
 
                 if (layoutType === 'image-only') {
                    return (
