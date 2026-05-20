@@ -2,5 +2,5 @@
   "name": "Fably",
   "description": "Fably - Dein magischer Kinderbuchgenerator. Erstelle deine eigenen Abenteuer mit Hilfe von KI.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

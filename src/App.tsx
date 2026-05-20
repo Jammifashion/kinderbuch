@@ -15,7 +15,9 @@ import { GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User 
 
 // --- Initialization ---
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
-const MODEL_NAME = 'gemini-2.5-flash';
+const SKELETON_MODEL = 'gemini-3.1-flash-lite';
+const STORY_MODEL = 'gemini-3.5-flash';
+const EDIT_MODEL = 'gemini-3.5-flash';
 const IMAGE_MODEL = 'gemini-2.5-flash-image';
 const ADMIN_EMAIL = 'gbr@jammifashion.de'; 
 
@@ -26,7 +28,7 @@ const childFriendlySafetySettings = [
   { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE }
 ];
 
-const childFriendlySystemInstruction = "Du bist ein liebevoller Kinderbuch-Autor. Alltägliche Themen wie Arztbesuche, Kranksein, Traurigkeit oder kleine Geheimnisse sind absolut erlaubt und erwünscht. Blockiere nur echte Gewalt, Hassrede oder nicht-kindgerechte Inhalte.";
+const childFriendlySystemInstruction = "Du bist ein liebevoller Kinderbuch-Autor. Alltägliche Themen wie Arztbesuche, Kranksein, Pflaster, Bauchschmerzen oder kleine Geheimnisse sind absolut kindgerecht und erwünscht. Blockiere nur echte Gewalt, Hassrede oder adulten Content.";
 
 const ALLOWED_EMAILS = [
   'gbr@jammifashion.de',
@@ -1000,7 +1002,7 @@ export default function App() {
         : `Generate a completely random, beautiful and creative starting point (1-2 sentences) for a children's book. Use themes like brave animals, vibrant nature, friendly robots, space adventures or magical worlds. Return ONLY the finished proposal text, no other text around it. IMPORTANT: GENERATE THE TEXT IN ${language.toUpperCase()}.`;
 
       const response = await ai.models.generateContent({
-        model: MODEL_NAME,
+        model: STORY_MODEL,
         contents: { parts: [{ text: prompt }] },
         config: {
           safetySettings: childFriendlySafetySettings,
@@ -1038,7 +1040,7 @@ export default function App() {
       // 1. AI PRE-CHECK
       const safetyPrompt = `Evaluate the following input strictly for child safety. Does it contain sensitive, violent, frightening, drug-related, discriminatory or sexual content? Reply ONLY with "UNSAFE" if it is inappropriate, otherwise with "SAFE". Language may vary.\nInput: "${idea}"`;
       const safetyRes = await ai.models.generateContent({
-        model: MODEL_NAME,
+        model: SKELETON_MODEL,
         contents: safetyPrompt,
         config: {
           systemInstruction: "You are a child safety filter.",
@@ -1080,7 +1082,7 @@ export default function App() {
       }`;
       
       const response = await ai.models.generateContent({
-        model: MODEL_NAME,
+        model: SKELETON_MODEL,
         contents: prompt,
         config: {
           systemInstruction: `Only youth-friendly, positive and educationally valuable content for children between 2 and 8 years of age may be generated. Targeted language: ${language.toUpperCase()}.\n\n${childFriendlySystemInstruction}`,
@@ -1463,7 +1465,7 @@ export default function App() {
       // 0. PRE-CHECK
       const safetyPrompt = `Bewerte die folgende Eingabe auf Kindersicherheit. Enthält sie sensible, gewalttätige, beängstigende, drogenbezogene, diskriminierende oder sexuelle Inhalte? Antworte NUR mit "UNSAFE", wenn sie ungeeignet ist, sonst mit "SAFE".\nEingabe: "${prompt}"`;
       const safetyRes = await ai.models.generateContent({ 
-        model: MODEL_NAME, 
+        model: SKELETON_MODEL, 
         contents: safetyPrompt,
         config: {
           safetySettings: childFriendlySafetySettings,
@@ -1666,7 +1668,7 @@ Your output MUST have exactly this JSON format:
 `;
 
       const response = await ai.models.generateContent({
-        model: MODEL_NAME,
+        model: STORY_MODEL,
         contents: {
           parts: [{ text: promptStr }],
         },
@@ -1693,7 +1695,7 @@ Your output MUST have exactly this JSON format:
       
       const lektoratPromptStr = `Here is the raw draft book JSON:\n\n${cleanJson}\n\nReturn strictly a valid JSON object in the exact same format! Ensure the language is ${language.toUpperCase()}.`;
       const lektoratRes = await ai.models.generateContent({
-        model: 'gemini-3.1-pro-preview', // Updated to latest Pro model
+        model: EDIT_MODEL,
         contents: {
           parts: [{ text: lektoratPromptStr }]
         },

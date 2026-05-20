@@ -320,7 +320,7 @@ async function startServer() {
       }
 
       // 2. Multimodal Gemini Analysis
-      const { GoogleGenAI } = await import('@google/genai');
+      const { GoogleGenAI, HarmCategory, HarmBlockThreshold } = await import('@google/genai');
       const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
       if (!apiKey) {
         throw new Error("No Gemini API key found in server environment.");
@@ -329,18 +329,54 @@ async function startServer() {
       
       const analysisPrompt = `Analyze this plush toy. Its name is ${plushName || 'the plush toy'}. Describe its species, main colors, textures, and any unique features (like a hat or a scarf). Create a detailed prompt in English for a perfect 2D vector cartoon character illustration based on this toy. Ensure the prompt explicitly asks for a 2D flat cartoon style and strictly forbids 3D or realistic styles. Output ONLY the English prompt.`;
       
-      const analysisResponse = await aiServer.models.generateContent({
-        model: 'gemini-3.1-pro-preview',
-        contents: [
-          {
-            role: "user",
-            parts: [
-              { text: analysisPrompt },
-              { inlineData: { data: imageBase64, mimeType: 'image/jpeg' } }
+      let analysisResponse;
+      try {
+        console.log(`[Verzaubern] Trying model gemini-3.1-flash-lite...`);
+        analysisResponse = await aiServer.models.generateContent({
+          model: 'gemini-3.1-flash-lite',
+          config: {
+            systemInstruction: "Du bist ein liebevoller Kinderbuch-Autor. Alltägliche Themen wie Arztbesuche, Kranksein, Pflaster, Bauchschmerzen oder kleine Geheimnisse sind absolut kindgerecht und erwünscht. Blockiere nur echte Gewalt, Hassrede oder adulten Content.",
+            safetySettings: [
+              { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+              { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+              { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
+              { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE }
             ]
-          }
-        ]
-      });
+          },
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { text: analysisPrompt },
+                { inlineData: { data: imageBase64, mimeType: 'image/jpeg' } }
+              ]
+            }
+          ]
+        });
+      } catch (liteErr: any) {
+        console.warn("[Verzaubern] gemini-3.1-flash-lite failed, falling back to gemini-3.5-flash. Error:", liteErr.message);
+        analysisResponse = await aiServer.models.generateContent({
+          model: 'gemini-3.5-flash',
+          config: {
+            systemInstruction: "Du bist ein liebevoller Kinderbuch-Autor. Alltägliche Themen wie Arztbesuche, Kranksein, Pflaster, Bauchschmerzen oder kleine Geheimnisse sind absolut kindgerecht und erwünscht. Blockiere nur echte Gewalt, Hassrede oder adulten Content.",
+            safetySettings: [
+              { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+              { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+              { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
+              { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE }
+            ]
+          },
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { text: analysisPrompt },
+                { inlineData: { data: imageBase64, mimeType: 'image/jpeg' } }
+              ]
+            }
+          ]
+        });
+      }
 
       let generatedPromptEn = analysisResponse.text?.trim() || "";
       if (!generatedPromptEn) {
@@ -351,7 +387,7 @@ async function startServer() {
       generatedPromptEn = generatedPromptEn.replace(/^```(\w+)?\n/g, '').replace(/\n```$/g, '').trim();
 
       // 3. Image Generation
-      const finalPrompt = generatedPromptEn + ", absolutely no text, no letters, no words, no typography, no signatures, 2D flat cartoon vector illustration style, vibrant colors, clean white background, no 3D elements, no realistic shading, solid colors, cute children book style";
+      const finalPrompt = generatedPromptEn + ", absolutely no text, no letters, no words, no typography, no signatures, clean character digital art style, perfect illustration";
       console.log(`[Verzaubern] Prompt being sent: "${finalPrompt}"`);
 
       const imgResponse = await aiServer.models.generateContent({
