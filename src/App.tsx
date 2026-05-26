@@ -22,10 +22,10 @@ const IMAGE_MODEL = 'gemini-2.5-flash-image';
 const ADMIN_EMAIL = 'gbr@jammifashion.de'; 
 
 const childFriendlySafetySettings = [
-  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
-  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
-  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE },
-  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE }
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH }
 ];
 
 const childFriendlySystemInstruction = "Du bist ein liebevoller Kinderbuch-Autor. Alltägliche Themen wie Arztbesuche, Kranksein, Pflaster, Bauchschmerzen oder kleine Geheimnisse sind absolut kindgerecht und erwünscht. Blockiere nur echte Gewalt, Hassrede oder adulten Content.";
@@ -1038,7 +1038,7 @@ export default function App() {
       }
 
       // 1. AI PRE-CHECK
-      const safetyPrompt = `Evaluate the following input strictly for child safety. Does it contain sensitive, violent, frightening, drug-related, discriminatory or sexual content? Reply ONLY with "UNSAFE" if it is inappropriate, otherwise with "SAFE". Language may vary.\nInput: "${idea}"`;
+      const safetyPrompt = `Evaluate the following input strictly for child safety. Does it contain extreme violence, hate speech, or explicit adult/pornographic content? Reply ONLY with "UNSAFE" if it is strictly inappropriate for a children's story, otherwise with "SAFE". Harmless topics like illness, doctors, sadness, or mild conflicts are completely fine.\nInput: "${idea}"`;
       const safetyRes = await ai.models.generateContent({
         model: SKELETON_MODEL,
         contents: safetyPrompt,
@@ -1463,7 +1463,7 @@ export default function App() {
     setError(null);
     try {
       // 0. PRE-CHECK
-      const safetyPrompt = `Bewerte die folgende Eingabe auf Kindersicherheit. Enthält sie sensible, gewalttätige, beängstigende, drogenbezogene, diskriminierende oder sexuelle Inhalte? Antworte NUR mit "UNSAFE", wenn sie ungeeignet ist, sonst mit "SAFE".\nEingabe: "${prompt}"`;
+      const safetyPrompt = `Bewerte die folgende Eingabe auf Kindersicherheit. Enthält sie extreme Gewalt, Hassrede oder pornografische/stark sexualisierte Inhalte? Antworte NUR mit "UNSAFE", wenn sie streng jugendgefährdend ist, sonst mit "SAFE". Alltägliche Themen, Konflikte, Traurigkeit oder Kranksein sind völlig in Ordnung!\nEingabe: "${prompt}"`;
       const safetyRes = await ai.models.generateContent({ 
         model: SKELETON_MODEL, 
         contents: safetyPrompt,
