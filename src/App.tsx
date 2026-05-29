@@ -74,6 +74,8 @@ interface BookPage {
   imagePrompt: string;
   imageUrl?: string;
   layoutType?: 'text-only' | 'image-only' | 'stacked';
+  choices?: { id: string; text: string; resultText: string }[];
+  selectedChoiceId?: string | null;
 }
 
 interface KostenProtokoll {
@@ -215,12 +217,28 @@ export default function App() {
   const [showOnboarding, setShowOnboarding] = useState<boolean>(() => {
     return localStorage.getItem('jammi_has_seen_onboarding') !== 'true';
   });
+
+  // PWA states
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isInstallable, setIsInstallable] = useState(false);
+  const [showIosInstallModal, setShowIosInstallModal] = useState(false);
+  const [isIos, setIsIos] = useState(false);
   
   const [allFinishedBooks, setAllFinishedBooks] = useState<AusgearbeitetesBuch[]>([]);
   const [savedAvatars, setSavedAvatars] = useState<Avatar[]>([]);
   const [selectedAvatarId, setSelectedAvatarId] = useState<string | null>(null);
+
+  // Interactive Character Creator States
+  const [creationTab, setCreationTab] = useState<'upload' | 'manual'>('upload');
+  const [manualName, setManualName] = useState('');
+  const [manualPersonality, setManualPersonality] = useState('Mutig 🦁');
+  const [manualSpecies, setManualSpecies] = useState('Hase 🐰');
+  const [manualAppearance, setManualAppearance] = useState('');
+  const [isGeneratingManualAvatar, setIsGeneratingManualAvatar] = useState(false);
+  const [manualAvatarError, setManualAvatarError] = useState<string | null>(null);
+
   const [selectedSkriptForBook, setSelectedSkriptForBook] = useState<StoryResult | null>(null);
-  const [bookConfig, setBookConfig] = useState({ zielalter: '4-6 Jahre', stimmung: 'Lustig', seitenAnzahl: 12 });
+  const [bookConfig, setBookConfig] = useState({ zielalter: '4-6 Jahre', stimmung: 'Lustig', seitenAnzahl: 12, isInteractive: false });
   const [readingBook, setReadingBook] = useState<AusgearbeitetesBuch | null>(null);
   const [currentReadingPage, setCurrentReadingPage] = useState(0);
   const [editingPageIdx, setEditingPageIdx] = useState<number | null>(null);
@@ -248,6 +266,13 @@ export default function App() {
     return localStorage.getItem('jammi_theme') || 'orange';
   });
 
+  const randomHero = useMemo(() => {
+    if (activeTab === 'create' && savedAvatars.length > 0) {
+      return savedAvatars[Math.floor(Math.random() * savedAvatars.length)];
+    }
+    return null;
+  }, [activeTab, savedAvatars]);
+
   useEffect(() => {
     const root = document.documentElement;
     if (isDarkMode) {
@@ -262,6 +287,49 @@ export default function App() {
     document.documentElement.setAttribute('data-theme', currentTheme);
     localStorage.setItem('jammi_theme', currentTheme);
   }, [currentTheme]);
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setIsInstallable(true);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    // Detect if iOS device
+    const userAgent = window.navigator.userAgent.toLowerCase();
+    const isIosDevice = /iphone|ipad|ipod/.test(userAgent);
+    setIsIos(isIosDevice);
+
+    // Check if system is already standalone (running inside PWA window)
+    if (
+      window.matchMedia('(display-mode: standalone)').matches ||
+      (window.navigator as any).standalone === true
+    ) {
+      setIsInstallable(false);
+    } else if (isIosDevice) {
+      // iOS doesn't support automatic prompt, but we can display the guided helper
+      setIsInstallable(true);
+    }
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, []);
+
+  const handleInstallApp = async () => {
+    if (isIos) {
+      setShowIosInstallModal(true);
+      return;
+    }
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    console.log(`PWA installation outcome: ${outcome}`);
+    setDeferredPrompt(null);
+    setIsInstallable(false);
+  };
 
   const canPerformAction = () => {
     if (isDevMode) return true;
@@ -519,13 +587,13 @@ export default function App() {
     return (
     <div className="space-y-8 animate-in fade-in duration-500">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6">
+        <button onClick={() => setActiveTab('avatars')} className="bg-theme-card p-8 rounded-[32px] shadow-sm border border-theme-border hover:border-theme-primary-border transition-all flex flex-col items-center gap-4 text-center cursor-pointer">
+          <span className="text-5xl">🦸</span>
+          <span className="font-bold text-xl text-theme-base">{t('heroes.title')}</span>
+        </button>
         <button onClick={() => setActiveTab('create')} className="bg-theme-card p-8 rounded-[32px] shadow-sm border border-theme-border hover:border-theme-primary-border transition-all flex flex-col items-center gap-4 text-center cursor-pointer">
           <span className="text-5xl">✍️</span>
           <span className="font-bold text-xl text-theme-base">{t('dashboard.new_story')}</span>
-        </button>
-        <button onClick={() => setActiveTab('avatars')} className="bg-theme-card p-8 rounded-[32px] shadow-sm border border-theme-border hover:border-theme-primary-border transition-all flex flex-col items-center gap-4 text-center cursor-pointer">
-          <span className="text-5xl">🦸</span>
-          <span className="font-bold text-xl text-theme-base">Helden-Galerie</span>
         </button>
         <button onClick={() => setActiveTab('library')} className="bg-theme-card p-8 rounded-[32px] shadow-sm border border-theme-border hover:border-theme-primary-border transition-all flex flex-col items-center gap-4 text-center cursor-pointer">
           <span className="text-5xl">📜</span>
@@ -863,6 +931,115 @@ export default function App() {
     }
   };
 
+  const handleCreateManualAvatar = async () => {
+    if (!manualName.trim() || !manualAppearance.trim()) {
+      setManualAvatarError("Bitte gib einen Namen und ein Aussehen für deinen Helden ein!");
+      return;
+    }
+    
+    if (!canPerformAction()) {
+      setManualAvatarError("Du hast nicht genügend Guthaben!");
+      return;
+    }
+
+    setIsGeneratingManualAvatar(true);
+    setManualAvatarError(null);
+    try {
+      // 1. Paid API key check for AI Studio UI
+      if ((window as any).aistudio && typeof (window as any).aistudio.hasSelectedApiKey === 'function') {
+        const hasKey = await (window as any).aistudio.hasSelectedApiKey();
+        if (!hasKey) {
+          await (window as any).aistudio.openSelectKey();
+        }
+      }
+
+      // 2. Init AI
+      const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error("Gemini API Key fehlt! Bitte in den Einstellungen der App setzen.");
+      }
+      const aiPaid = new GoogleGenAI({ apiKey });
+
+      // 3. Make robust, gorgeous character design prompt based on inputs
+      const finalPrompt = `A flat 2D vector cartoon character illustration of an adorable children's book hero. 
+      Species: ${manualSpecies}.
+      Name: ${manualName}.
+      Personality: ${manualPersonality}.
+      Appearance & Clothes: ${manualAppearance}.
+      Style: Cute and friendly cartoon character design, solid vibrant colors, clean vector lines, centered, neutral solid background, absolutely no text, no words, no letters, no signatures, perfect illustration.`;
+
+      console.log(`[Frontend] Generiere manuellen Char-Avatar:`, finalPrompt);
+
+      let response;
+      try {
+        response = await aiPaid.models.generateContent({
+          model: IMAGE_MODEL,
+          contents: {
+            parts: [{ text: finalPrompt }],
+          },
+          config: {
+            imageConfig: {
+              aspectRatio: "1:1",
+            }
+          }
+        });
+      } catch (apiErr: any) {
+        console.error("[Frontend] API Fehler:", apiErr);
+        throw new Error(`API Fehler: ${apiErr.message}`);
+      }
+
+      let base64Image = '';
+      if (response && response.candidates && response.candidates[0].content.parts) {
+        for (const part of response.candidates[0].content.parts) {
+          if (part.inlineData) {
+            base64Image = part.inlineData.data;
+            break;
+          }
+        }
+      }
+      if (!base64Image) {
+        throw new Error("Bild-Antwort der API war leer.");
+      }
+
+      // 4. Speicher in Firebase Storage
+      const storageRef = ref(storage, `charaktere/avatar_${Date.now()}.png`);
+      const blob = await fetch(`data:image/png;base64,${base64Image}`).then(r => r.blob());
+      await uploadBytes(storageRef, blob);
+      const url = await getDownloadURL(storageRef);
+
+      // 5. DB Save to avatars collection
+      const docRef = await addDoc(collection(db, 'avatars'), {
+        userId: isDevMode ? 'dev-user' : currentUser?.uid,
+        avatarName: manualName.trim(),
+        imageUrl: url,
+        characterDescriptionEn: `An adorable children's book character, cute 2D vector style, ${manualSpecies}, named ${manualName}, with personality ${manualPersonality}: ${manualAppearance}`,
+        personality: manualPersonality,
+        species: manualSpecies,
+        appearance: manualAppearance,
+        createdAt: serverTimestamp()
+      });
+
+      // 6. Deduct credit and fetch freshly created avatar
+      await deductCredit('avatar');
+      setSelectedAvatarId(docRef.id);
+      
+      // Reset form fields
+      setManualName("");
+      setManualAppearance("");
+      
+      // Fetch list
+      fetchAvatars(isDevMode ? 'dev-user' : currentUser?.uid || '');
+
+      setCreationTab('upload'); // Go back to original view or stay
+      alert(`Hurra! ${manualName} wurde erfolgreich zum Leben erweckt! 🌟`);
+    } catch (err: any) {
+      console.error("Fehler bei manueller Helden-Erstellung:", err);
+      setManualAvatarError(err.message || "Unerwarteter Fehler bei der Bilderstellung.");
+    } finally {
+      setIsGeneratingManualAvatar(false);
+    }
+  };
+
   const handleDeleteAvatar = async (id: string) => {
     try {
       await deleteDoc(doc(db, 'avatars', id));
@@ -1026,32 +1203,9 @@ export default function App() {
     setIsLoading(true);
     setError(null);
     try {
-      // 0. LOCAL KEYWORD PRE-CHECK
-      const blockedKeywords = ['tod', 'blut', 'mord', 'töten', 'krieg', 'gewalt', 'sex', 'porno', 'droge', 'waffe', 'schießen', 'sterben', 'schlagen', 'hassen', 'death', 'blood', 'murder', 'kill', 'war', 'violence', 'porn', 'drug', 'weapon', 'shoot', 'die', 'hit', 'hate'];
-      const ideaLower = idea.toLowerCase();
-      const hasBlockedWord = blockedKeywords.some(word => ideaLower.includes(word));
-      
-      if (hasBlockedWord) {
-        setError(t('create.safety_error'));
-        setIsLoading(false);
-        return;
-      }
+      // 0. LOCAL KEYWORD PRE-CHECK (Disabled per user request)
 
-      // 1. AI PRE-CHECK
-      const safetyPrompt = `Evaluate the following input strictly for child safety. Does it contain extreme violence, hate speech, or explicit adult/pornographic content? Reply ONLY with "UNSAFE" if it is strictly inappropriate for a children's story, otherwise with "SAFE". Harmless topics like illness, doctors, sadness, or mild conflicts are completely fine.\nInput: "${idea}"`;
-      const safetyRes = await ai.models.generateContent({
-        model: SKELETON_MODEL,
-        contents: safetyPrompt,
-        config: {
-          systemInstruction: "You are a child safety filter.",
-          safetySettings: childFriendlySafetySettings
-        }
-      });
-      if (safetyRes.text && safetyRes.text.trim().toUpperCase().includes('UNSAFE')) {
-        setError(t('create.safety_error'));
-        setIsLoading(false);
-        return;
-      }
+      // 1. AI PRE-CHECK (Disabled per user request)
 
       let heroInstruction = `ABOUT THE MAIN CHARACTER: The 'bild_prompt_en' MUST be a 'Complete Outfit Blueprint'. Define ALL pieces of clothing (headwear, top, bottom, shoes, accessories) with fixed colors and styles. Anything not explicitly defined leads to inconsistencies.`;
       
@@ -1362,6 +1516,21 @@ export default function App() {
     }
   };
 
+  const handleSelectChoice = async (pageIdx: number, choiceId: string) => {
+    if (!readingBook) return;
+    try {
+      const newSeiten = [...readingBook.seiten];
+      newSeiten[pageIdx] = { ...newSeiten[pageIdx], selectedChoiceId: choiceId || null };
+      
+      await updateDoc(doc(db, 'ausgearbeitete_buecher', readingBook.id), { seiten: newSeiten });
+      setReadingBook({ ...readingBook, seiten: newSeiten });
+      setAllFinishedBooks(prev => prev.map(b => b.id === readingBook.id ? { ...b, seiten: newSeiten } : b));
+    } catch (err: any) {
+      console.error("Fehler beim Speichern der Storyline-Entscheidung:", err);
+      alert("Fehler beim Speichern deines Pfades.");
+    }
+  };
+
   const handleDeleteSelected = () => {
     setShowDeleteConfirm('selected');
   };
@@ -1462,20 +1631,6 @@ export default function App() {
     setIsImageLoading(true);
     setError(null);
     try {
-      // 0. PRE-CHECK
-      const safetyPrompt = `Bewerte die folgende Eingabe auf Kindersicherheit. Enthält sie extreme Gewalt, Hassrede oder pornografische/stark sexualisierte Inhalte? Antworte NUR mit "UNSAFE", wenn sie streng jugendgefährdend ist, sonst mit "SAFE". Alltägliche Themen, Konflikte, Traurigkeit oder Kranksein sind völlig in Ordnung!\nEingabe: "${prompt}"`;
-      const safetyRes = await ai.models.generateContent({ 
-        model: SKELETON_MODEL, 
-        contents: safetyPrompt,
-        config: {
-          safetySettings: childFriendlySafetySettings,
-          systemInstruction: childFriendlySystemInstruction
-        }
-      });
-      if (safetyRes.text && safetyRes.text.trim().toUpperCase().includes('UNSAFE')) {
-        throw new Error("Ups! Dieser Inhalt ist für ein friedliches Kinderbuch leider nicht geeignet. Lass uns lieber ein schönes, positives Abenteuer erleben! 🌟");
-      }
-
       // 1. Paid API key check for AI Studio UI
       if ((window as any).aistudio && typeof (window as any).aistudio.hasSelectedApiKey === 'function') {
         const hasKey = await (window as any).aistudio.hasSelectedApiKey();
@@ -1628,7 +1783,7 @@ export default function App() {
         else if (zielalter === "6-8 Jahre") inhaltsdichte = "High (Longer sentences, somewhat more complex structure, approx. 4-6 sentences per page)";
       }
 
-      const promptStr = `
+      let promptStr = `
 You are a professional children's book author. Turn the following short script into a complete book, formatted as JSON.
 TARGET LANGUAGE: ${language.toUpperCase()}
 
@@ -1651,10 +1806,38 @@ VISUAL CONSISTENCY:
 - Analyze for each image request separately whether the main character MUST appear.
 - ALWAYS GENERATE 'imagePrompt' IN ENGLISH. 
 - APPEND THIS ANTI-TEXT BAR TO EVERY imagePrompt: ", absolutely no text, no letters, no words, no typography, no signatures, clean character digital art style, perfect illustration"
+`;
 
+      if (bookConfig.isInteractive) {
+        promptStr += `
+INTERACTIVE CHOOSE-YOUR-OWN-ADVENTURE RULES:
+- Since this is an interactive adventure, you MUST design multiple-choice branches at specific text pages (specifically Page 3 and Page 5, and Page 7 if seitenAnzahl is 16).
+- On these specific pages, you MUST include a "choices" array inside the page object.
+- Each choice in the array MUST contain:
+  - "id": a unique string (e.g. "path_a", "path_b")
+  - "text": a short, friendly choice action in ${language.toUpperCase()} (e.g. "Über die Hängebrücke balancieren" or "Einen Umweg durch das Beerenfeld nehmen")
+  - "resultText": a continuous narrative paragraph (3-4 sentences) in ${language.toUpperCase()} that describes immediately what happens as a result of that specific decision.
+- Ensure that the story flows logically regardless of which option is chosen.
+
+Example of a text-only page with choices in JSON schema:
+{
+  "pageNumber": 3,
+  "layoutType": "text-only",
+  "text": "Starting situation context text for Page 3...",
+  "imagePrompt": "",
+  "choices": [
+    { "id": "option_1", "text": "Mutig durch das Gebüsch schlüpfen", "resultText": "Der Held krabbelt vorsichtig durch das weiche Moos. Dahinter glitzert ein verborgener See mit singenden Fischen!" },
+    { "id": "option_2", "text": "Die alte Steintreppe hinaufklettern", "resultText": "Schritt für Schritt geht er nach oben. Oben angekommen hat er einen herrlichen Ausblick und findet ein glitzerndes Band!" }
+  ]
+}
+`;
+      }
+
+      promptStr += `
 Your output MUST have exactly this JSON format:
 {
   "titel": "Creative book title in ${language.toUpperCase()}",
+  "isInteractive": ${bookConfig.isInteractive},
   "seiten": [
     {
       "pageNumber": 1,
@@ -1701,7 +1884,7 @@ Your output MUST have exactly this JSON format:
         },
         config: {
           responseMimeType: "application/json",
-          systemInstruction: `You are a professional children's book editor. Your task is to stylistically, grammatically and educationally polish the existing book JSON in ${language.toUpperCase()}. Optimize the text smoothly for the target group ${zielalter}, correct sentence structures and make the choice of words even more magical. Never change the JSON structure, the number of pages or the fields (especially 'pageNumber', 'layoutType', 'imagePrompt'). RETURN EXCLUSIVELY THE CORRECTED JSON.\n\n${childFriendlySystemInstruction}`,
+          systemInstruction: `You are a professional children's book editor. Your task is to stylistically, grammatically and educationally polish the existing book JSON in ${language.toUpperCase()}. Preserve all 'choices' arrays and the 'isInteractive' flag if they are present. Optimize the text smoothly for the target group ${zielalter}, correct sentence structures and make the choice of words even more magical. Never change the JSON structure, the number of pages or the fields. RETURN EXCLUSIVELY THE CORRECTED JSON.\n\n${childFriendlySystemInstruction}`,
           safetySettings: childFriendlySafetySettings
         }
       });
@@ -1737,6 +1920,7 @@ Your output MUST have exactly this JSON format:
         stimmung,
         seitenAnzahl,
         seiten: pages,
+        isInteractive: parsed.isInteractive || bookConfig.isInteractive || false,
         coverImage: selectedSkriptForBook.hauptcharakter?.avatar_url || null,
         isFavorite: false,
         labelId: null,
@@ -1953,6 +2137,14 @@ Your output MUST have exactly this JSON format:
           <div className="flex items-center gap-4">
             {/* Desktop Buttons */}
             <div className="hidden md:flex gap-3">
+              {isInstallable && (
+                <button 
+                  onClick={handleInstallApp}
+                  className="px-5 py-2 text-sm font-bold bg-theme-primary text-white rounded-full shadow-md hover:bg-theme-primary-strong hover:-translate-y-0.5 active:translate-y-0 transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5"
+                >
+                  <span>📲</span> {language === 'de' ? 'App installieren' : 'Install App'}
+                </button>
+              )}
               <button 
                 onClick={() => setIsBackupManagerOpen(true)} 
               className="rounded-full bg-theme-card border border-theme-primary-soft flex items-center justify-center w-10 h-10 text-xl shadow-sm hover:bg-theme-primary-softer transition-all cursor-pointer" 
@@ -1969,13 +2161,23 @@ Your output MUST have exactly this JSON format:
           </div>
 
           {/* Mobile Burger Icon (now centered below title on mobile or side-by-side) */}
-          <button 
-            onClick={() => setIsMobileMenuOpen(true)} 
-            className="md:hidden flex items-center gap-2 px-4 py-2 bg-theme-card rounded-full shadow-sm text-sm font-bold cursor-pointer text-theme-muted-strong border border-theme-border hover:bg-theme-bg-soft transition-all"
-          >
-            <span>{t('common.menu')}</span>
-            <span className="text-lg">☰</span>
-          </button>
+          <div className="flex gap-2 items-center md:hidden">
+            {isInstallable && (
+              <button 
+                onClick={handleInstallApp}
+                className="px-4 py-2 bg-theme-primary text-white rounded-full shadow-sm text-sm font-bold cursor-pointer hover:bg-theme-primary-strong flex items-center gap-1.5 shrink-0"
+              >
+                <span>📲</span> {language === 'de' ? 'App laden' : 'Get App'}
+              </button>
+            )}
+            <button 
+              onClick={() => setIsMobileMenuOpen(true)} 
+              className="flex items-center gap-2 px-4 py-2 bg-theme-card rounded-full shadow-sm text-sm font-bold cursor-pointer text-theme-muted-strong border border-theme-border hover:bg-theme-bg-soft transition-all"
+            >
+              <span>{t('common.menu')}</span>
+              <span className="text-lg">☰</span>
+            </button>
+          </div>
         </div>
         </div>
       </header>
@@ -1990,7 +2192,7 @@ Your output MUST have exactly this JSON format:
         />
         <div className="hidden md:flex gap-2 sm:gap-4 border-b border-theme-primary-border mb-8 overflow-x-auto pb-2 scrollbar-hide">
           <button onClick={() => setActiveTab('dashboard')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'dashboard' ? 'border-theme-primary text-theme-primary' : 'border-transparent text-theme-muted hover:text-theme-primary'}`}>{t('dashboard.new_story_nav')}</button>
-          <button onClick={() => setActiveTab('avatars')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'avatars' ? 'border-theme-primary text-theme-primary' : 'border-transparent text-theme-muted hover:text-theme-primary'}`}>🦸 Helden-Galerie</button>
+          <button onClick={() => setActiveTab('avatars')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'avatars' ? 'border-theme-primary text-theme-primary' : 'border-transparent text-theme-muted hover:text-theme-primary'}`}>🦸 {t('heroes.title')}</button>
           <button onClick={() => setActiveTab('create')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'create' ? 'border-theme-primary text-theme-primary' : 'border-transparent text-theme-muted hover:text-theme-primary'}`}>{t('dashboard.new_story')}</button>
           <button onClick={() => setActiveTab('library')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'library' ? 'border-theme-primary text-theme-primary' : 'border-transparent text-theme-muted hover:text-theme-primary'}`}>{t('library.title')} ({allBooks.length})</button>
           <button onClick={() => setActiveTab('books')} className={`p-3 sm:p-4 font-bold border-b-4 transition whitespace-nowrap ${activeTab === 'books' ? 'border-theme-primary text-theme-primary' : 'border-transparent text-theme-muted hover:text-theme-primary'}`}>{t('book.title')} ({allFinishedBooks.length})</button>
@@ -1998,31 +2200,246 @@ Your output MUST have exactly this JSON format:
 
         {activeTab === 'dashboard' ? <Dashboard /> : activeTab === 'avatars' ? (
           <div className="mb-8 rounded-[40px] bg-theme-card p-8 shadow-xl border-4 border-theme-primary-softer">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-              <h2 className="text-2xl font-bold text-theme-title">Deine Helden-Galerie</h2>
-              <div className="flex flex-col w-full sm:w-auto items-stretch sm:items-end gap-2">
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                  <input 
-                    type="text" 
-                    placeholder="Name des Kuscheltiers" 
-                    value={plushName} 
-                    onChange={e => setPlushName(e.target.value)} 
-                    className="border border-theme-border rounded-full px-4 py-3 focus:outline-none focus:border-theme-primary w-full sm:w-auto"
-                  />
-                  <button 
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isUploadingPlush || !plushName.trim() || !canPerformAction()}
-                    className="px-6 py-3 bg-theme-primary text-white font-bold rounded-full shadow-md hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 active:shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2 whitespace-nowrap"
-                  >
-                    <span className="text-xl">🧸</span> 
-                    {isUploadingPlush ? 'Wird verzaubert...' : 'Foto hochladen (💎 0.15)'}
-                  </button>
+            <h2 className="text-3xl font-bold text-theme-title mb-6 flex items-center gap-2">🦸 {t('heroes.title')}</h2>
+            
+            {/* Creator Segment Control */}
+            <div className="mb-8 p-1.5 bg-slate-100 rounded-2xl flex gap-2">
+              <button 
+                onClick={() => setCreationTab('upload')}
+                className={`flex-1 py-3 text-sm font-bold rounded-xl transition-all ${creationTab === 'upload' ? 'bg-white shadow-sm text-theme-primary font-bold' : 'text-slate-500 hover:text-slate-800'}`}
+              >
+                {t('heroes.tab_upload')}
+              </button>
+              <button 
+                onClick={() => setCreationTab('manual')}
+                className={`flex-1 py-3 text-sm font-bold rounded-xl transition-all ${creationTab === 'manual' ? 'bg-white shadow-sm text-theme-primary font-bold' : 'text-slate-500 hover:text-slate-800'}`}
+              >
+                {t('heroes.tab_manual')}
+              </button>
+            </div>
+
+            {/* Upload Tab */}
+            {creationTab === 'upload' && (
+              <div className="bg-slate-50 border border-theme-border rounded-3xl p-6 mb-8 flex flex-col md:flex-row items-center justify-between gap-6text-slate-900">
+                <div className="flex-1">
+                  <h3 className="text-lg font-bold text-theme-base mb-1">{t('heroes.upload_title')}</h3>
+                  <p className="text-xs text-theme-muted">
+                    {t('heroes.upload_desc')}
+                  </p>
                 </div>
-                <div className="flex justify-center sm:justify-end">
-                  <OutOfCreditsMessage />
+                <div className="flex flex-col items-stretch sm:items-end gap-2 shrink-0">
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                    <input 
+                      type="text" 
+                      placeholder={t('heroes.upload_placeholder')}
+                      value={plushName} 
+                      onChange={e => setPlushName(e.target.value)} 
+                      className="border border-theme-border rounded-full px-4 py-3 focus:outline-none focus:border-theme-primary w-full bg-white text-slate-900"
+                    />
+                    <button 
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isUploadingPlush || !plushName.trim() || !canPerformAction()}
+                      className="px-6 py-3 bg-theme-primary text-white font-bold rounded-full shadow-md hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 active:shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2 whitespace-nowrap"
+                    >
+                      <span className="text-xl">🧸</span> 
+                      {isUploadingPlush ? t('heroes.upload_btn_loading') : t('heroes.upload_btn_ready')}
+                    </button>
+                  </div>
+                  <div className="flex justify-center sm:justify-end">
+                    <OutOfCreditsMessage />
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
+
+            {/* Manual Creator Tab */}
+            {creationTab === 'manual' && (
+              <div className="bg-slate-50 border border-theme-border rounded-3xl p-6 mb-8 space-y-6 text-slate-900">
+                <div>
+                  <h3 className="text-xl font-bold text-theme-base mb-1">{t('heroes.creator_title')}</h3>
+                  <p className="text-xs text-theme-muted">
+                    {t('heroes.creator_desc')}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Name & Species */}
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-bold text-theme-muted mb-2">{t('heroes.name_label')}</label>
+                      <input 
+                        type="text" 
+                        placeholder={t('heroes.name_placeholder')}
+                        value={manualName} 
+                        onChange={(e) => setManualName(e.target.value)}
+                        className="w-full border border-theme-border rounded-2xl px-4 py-3 bg-white text-slate-800 placeholder-slate-400 focus:outline-none focus:border-theme-primary font-bold"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-bold text-theme-muted mb-2">{t('heroes.species_label')}</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {['Hase 🐰', 'Bär 🧸', 'Katze 🐱', 'Hund 🐶', 'Fuchs 🦊', 'Drache 🐉', 'Anderes ✨'].map(species => {
+                          const isGerman = language === 'de';
+                          const displaySpecies = isGerman ? species : (
+                            species === 'Hase 🐰' ? 'Rabbit 🐰' :
+                            species === 'Bär 🧸' ? 'Bear 🧸' :
+                            species === 'Katze 🐱' ? 'Cat 🐱' :
+                            species === 'Hund 🐶' ? 'Dog 🐶' :
+                            species === 'Fuchs 🦊' ? 'Fox 🦊' :
+                            species === 'Drache 🐉' ? 'Dragon 🐉' : 'Other ✨'
+                          );
+                          return (
+                            <button
+                              key={species}
+                              type="button"
+                              onClick={() => {
+                                if (species === 'Anderes ✨') {
+                                  setManualSpecies('');
+                                } else {
+                                  setManualSpecies(species);
+                                }
+                              }}
+                              className={`py-2 px-1 text-xs font-bold rounded-xl border-2 transition-all ${
+                                manualSpecies === species || (species === 'Anderes ✨' && !['Hase 🐰', 'Bär 🧸', 'Katze 🐱', 'Hund 🐶', 'Fuchs 🦊', 'Drache 🐉'].includes(manualSpecies))
+                                  ? 'border-theme-primary bg-theme-primary/10 text-theme-primary-strong'
+                                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                              }`}
+                            >
+                              {displaySpecies}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {!['Hase 🐰', 'Bär 🧸', 'Katze 🐱', 'Hund 🐶', 'Fuchs 🦊', 'Drache 🐉'].includes(manualSpecies) && (
+                        <input 
+                          type="text" 
+                          placeholder={t('heroes.species_other_placeholder')}
+                          value={manualSpecies} 
+                          onChange={(e) => setManualSpecies(e.target.value)}
+                          className="w-full mt-2 border border-theme-border rounded-xl px-3 py-2 bg-white text-slate-800 text-sm focus:outline-none focus:border-theme-primary"
+                        />
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Personality */}
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-bold text-theme-muted mb-2">{t('heroes.personality_label')}</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {['Mutig 🦁', 'Schüchtern 🐹', 'Lustig 🦊', 'Abenteuerlustig 🦅', 'Neugierig 🐿️', 'Tollpatschig 🐼', 'Anderes ✨'].map(pers => {
+                          const isGerman = language === 'de';
+                          const displayPers = isGerman ? pers : (
+                            pers === 'Mutig 🦁' ? 'Brave 🦁' :
+                            pers === 'Schüchtern 🐹' ? 'Shy 🐹' :
+                            pers === 'Lustig 🦊' ? 'Funny 🦊' :
+                            pers === 'Abenteuerlustig 🦅' ? 'Adventurous 🦅' :
+                            pers === 'Neugierig 🐿️' ? 'Curious 🐿️' :
+                            pers === 'Tollpatschig 🐼' ? 'Clumsy 🐼' : 'Other ✨'
+                          );
+                          return (
+                            <button
+                              key={pers}
+                              type="button"
+                              onClick={() => {
+                                if (pers === 'Anderes ✨') {
+                                  setManualPersonality('');
+                                } else {
+                                  setManualPersonality(pers);
+                                }
+                              }}
+                              className={`py-2 px-3 text-xs font-bold rounded-xl border-2 transition-all text-left flex justify-between items-center ${
+                                manualPersonality === pers || (pers === 'Anderes ✨' && !['Mutig 🦁', 'Schüchtern 🐹', 'Lustig 🦊', 'Abenteuerlustig 🦅', 'Neugierig 🐿️', 'Tollpatschig 🐼'].includes(manualPersonality))
+                                  ? 'border-indigo-500 bg-indigo-50 text-indigo-700 font-bold'
+                                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                              }`}
+                            >
+                              {displayPers}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {!['Mutig 🦁', 'Schüchtern 🐹', 'Lustig 🦊', 'Abenteuerlustig 🦅', 'Neugierig 🐿️', 'Tollpatschig 🐼'].includes(manualPersonality) && (
+                        <input 
+                          type="text" 
+                          placeholder={t('heroes.personality_other_placeholder')}
+                          value={manualPersonality} 
+                          onChange={(e) => setManualPersonality(e.target.value)}
+                          className="w-full mt-2 border border-theme-border rounded-xl px-3 py-2 bg-white text-slate-800 text-sm focus:outline-none focus:border-theme-primary"
+                        />
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Appearance Description */}
+                <div>
+                  <div className="flex justify-between items-center mb-2">
+                    <label className="block text-sm font-bold text-theme-muted">{t('heroes.appearance_label')}</label>
+                    <span className="text-[10px] text-theme-muted italic">{t('heroes.appearance_hint')}</span>
+                  </div>
+                  <textarea 
+                    rows={2}
+                    placeholder={t('heroes.appearance_placeholder')} 
+                    value={manualAppearance}
+                    onChange={(e) => setManualAppearance(e.target.value)}
+                    className="w-full border border-theme-border rounded-2xl p-4 bg-white text-slate-800 placeholder-slate-400 focus:outline-none focus:border-theme-primary"
+                  />
+
+                  {/* Suggestion helpers */}
+                  <div className="mt-3">
+                    <span className="text-xs text-slate-400 font-bold block mb-1">{t('heroes.inspiration_ideas')}</span>
+                    <div className="flex flex-wrap gap-2">
+                      {(language === 'de' ? [
+                        "Hellblauer Hase mit roter Fliege und gelben Gummistiefeln",
+                        "Zimtfarbener Bär mit grüner Latzhose und kleinem Rucksack",
+                        "Süße rosa Katze mit blauem Ringelpullover und Schleife im Haar",
+                        "Abenteuerlustiger Fuchs mit Entdeckerhut und Lupe",
+                        "Fröhlicher kleiner grüner Drache mit winzigen Flügeln"
+                      ] : [
+                        "Light-blue rabbit with a red bow tie and yellow rain boots",
+                        "Cinnamon-colored bear with green overalls and a small backpack",
+                        "Cute pink cat with a blue striped sweater and a bow in her hair",
+                        "Adventurous fox with an explorer hat and a magnifying glass",
+                        "Happy little green dragon with tiny wings"
+                      ]).map((helper, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => setManualAppearance(helper)}
+                          className="text-[10px] bg-white border border-slate-200 text-slate-600 px-2.5 py-1.5 rounded-full hover:border-theme-primary hover:text-theme-primary transition-all font-medium"
+                        >
+                          {helper}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Confirm Panel */}
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-slate-200">
+                  <div className="flex gap-2">
+                    <OutOfCreditsMessage />
+                  </div>
+                  <button
+                    onClick={handleCreateManualAvatar}
+                    disabled={isGeneratingManualAvatar || !manualName.trim() || !manualAppearance.trim() || !canPerformAction()}
+                    className="w-full sm:w-auto px-8 py-4 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-full shadow-lg transition-transform hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 disabled:translate-y-0 flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <span>✨</span>
+                    {isGeneratingManualAvatar ? t('heroes.create_btn_loading') : t('heroes.create_btn_ready')}
+                  </button>
+                </div>
+
+                {manualAvatarError && (
+                  <div className="p-4 bg-red-100 border border-red-200 text-red-700 rounded-2xl text-xs font-bold leading-relaxed">
+                    {manualAvatarError}
+                  </div>
+                )}
+              </div>
+            )}
+
             {uploadError && (
               <div className="mb-6 p-4 bg-red-100 border border-red-200 text-red-700 rounded-2xl text-sm font-bold">
                 {uploadError}
@@ -2118,6 +2535,15 @@ Your output MUST have exactly this JSON format:
           </div>
         ) : activeTab === 'create' ? (
           <>
+            {randomHero && (
+              <div className="mb-6 p-4 bg-theme-primary/5 rounded-3xl border border-theme-primary/10 flex items-center gap-4">
+                <img src={randomHero.imageUrl || undefined} alt={randomHero.avatarName} className="w-16 h-16 rounded-2xl object-cover" />
+                <div>
+                    <h4 className="font-bold text-sm text-theme-base">{t('heroes.random_hero_title').replace('{name}', randomHero.avatarName)}</h4>
+                    <p className="text-xs text-theme-muted">{t('heroes.random_hero_desc').replace('{name}', randomHero.avatarName)}</p>
+                </div>
+              </div>
+            )}
             <div className="mb-8 rounded-[40px] bg-theme-card p-8 shadow-xl border-4 border-theme-primary-softer">
               <textarea
                 id="ideaTextarea"
@@ -2130,21 +2556,23 @@ Your output MUST have exactly this JSON format:
               
               <div className="mt-6 mb-2">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3 gap-4 sm:gap-2">
-                  <h3 className="font-bold text-theme-base text-sm">Oder wähle einen deiner Helden:</h3>
+                  <h3 className="font-bold text-theme-base text-sm">
+                    {language === 'de' ? 'Möchtest Du Abenteuer mit deinem Kuscheltier ?' : 'Want to go on an adventure with your plushie?'}
+                  </h3>
                   <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
                     <input 
                       type="text" 
-                      placeholder="Name des Kuscheltiers" 
+                      placeholder={t('heroes.upload_placeholder')}
                       value={plushName} 
                       onChange={e => setPlushName(e.target.value)} 
-                      className="text-xs border border-theme-border rounded-full px-3 py-2 sm:py-1.5 focus:outline-none focus:border-theme-primary w-full sm:w-auto"
+                      className="text-xs border border-theme-border rounded-full px-3 py-2 sm:py-1.5 focus:outline-none focus:border-theme-primary w-full sm:w-auto bg-white text-slate-900"
                     />
                     <button 
                       onClick={() => fileInputRef.current?.click()}
                       disabled={isUploadingPlush || !plushName.trim() || !canPerformAction()}
                       className="whitespace-nowrap text-xs bg-theme-primary/10 text-theme-primary-strong px-4 sm:px-3 py-2 sm:py-1.5 rounded-full font-bold hover:bg-theme-primary/20 transition-colors flex items-center justify-center gap-1 disabled:opacity-50"
                     >
-                      <span>🧸</span> {isUploadingPlush ? '...' : 'Foto hochladen (💎 0.15)'}
+                      <span>🧸</span> {isUploadingPlush ? '...' : t('heroes.upload_btn_ready')}
                     </button>
                   </div>
                 </div>
@@ -2157,7 +2585,7 @@ Your output MUST have exactly this JSON format:
                   </div>
                 )}
                 {savedAvatars.length === 0 ? (
-                  <p className="text-xs text-theme-muted italic">Noch keine Helden gespeichert. Erstelle eine Geschichte und speichere deinen ersten Held in der Helden-Galerie!</p>
+                  <p className="text-xs text-theme-muted italic">{t('heroes.no_heroes')}</p>
                 ) : (
                   <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide snap-x">
                     {savedAvatars.map(avatar => (
@@ -2416,7 +2844,7 @@ Your output MUST have exactly this JSON format:
                             }}
                             className="mt-2 w-full max-w-48 rounded-full bg-theme-primary/10 border border-theme-primary-soft py-2 text-xs font-bold text-theme-primary-strong hover:bg-theme-primary/20 transition-colors shadow-sm cursor-pointer"
                           >
-                            ⭐ In Helden-Galerie speichern
+                            {language === 'de' ? '⭐ In Helden-Galerie speichern' : '⭐ Save in Hero Gallery'}
                           </button>
                         )
                       )}
@@ -2666,6 +3094,21 @@ Your output MUST have exactly this JSON format:
                 </select>
               </div>
 
+              <div className="p-4 bg-indigo-50/50 border border-indigo-100 rounded-2xl">
+                <label className="flex items-center gap-3 font-bold text-slate-700 cursor-pointer text-sm">
+                  <input 
+                    type="checkbox" 
+                    checked={bookConfig.isInteractive}
+                    onChange={(e) => setBookConfig({ ...bookConfig, isInteractive: e.target.checked })}
+                    className="w-5 h-5 rounded text-indigo-500 focus:ring-indigo-500 border-theme-border cursor-pointer shrink-0"
+                  />
+                  <span>🌟 Interaktives Abenteuer aktivieren</span>
+                </label>
+                <p className="text-xs text-slate-500 ml-8 mt-1 italic">
+                  Fügt an spannenden Wendepunkten Multiple-Choice-Fragen ein, die den weiteren Verlauf der Geschichte beeinflussen und den Pfad speichern!
+                </p>
+              </div>
+
               <div className="flex flex-col gap-4 mt-8 pt-6 border-t border-theme-border">
                 <OutOfCreditsMessage />
                 <div className="flex gap-4">
@@ -2902,7 +3345,7 @@ Your output MUST have exactly this JSON format:
                       }}
                        className="w-full md:w-auto px-6 rounded-full bg-theme-primary/10 border border-theme-primary-soft py-3 font-bold text-theme-primary-strong hover:bg-theme-primary/20 transition-colors shadow-sm cursor-pointer"
                     >
-                      ⭐ In Helden-Galerie speichern
+                      {language === 'de' ? '⭐ In Helden-Galerie speichern' : '⭐ Save in Hero Gallery'}
                     </button>
                   )
                 )}
@@ -2987,8 +3430,20 @@ Your output MUST have exactly this JSON format:
             </button>
             <button 
               onClick={() => setCurrentReadingPage(p => Math.min(readingBook.seiten.length - 1, p + 1))}
-              disabled={currentReadingPage === readingBook.seiten.length - 1}
+              disabled={
+                currentReadingPage === readingBook.seiten.length - 1 ||
+                !!(readingBook.seiten[currentReadingPage]?.choices && 
+                   readingBook.seiten[currentReadingPage].choices!.length > 0 && 
+                   !readingBook.seiten[currentReadingPage].selectedChoiceId)
+              }
               className="absolute right-2 md:right-8 z-[90] w-12 h-12 bg-black/50 rounded-full flex items-center justify-center text-2xl disabled:opacity-20 cursor-pointer backdrop-blur-md transition-all hover:bg-black/70"
+              title={
+                readingBook.seiten[currentReadingPage]?.choices && 
+                readingBook.seiten[currentReadingPage].choices!.length > 0 && 
+                !readingBook.seiten[currentReadingPage].selectedChoiceId 
+                  ? "Bitte triff zuerst eine Entscheidung!" 
+                  : undefined
+              }
             >
               ▶
             </button>
@@ -3048,6 +3503,51 @@ Your output MUST have exactly this JSON format:
                             ) : (
                                 <>
                                    <p className={`font-serif text-center leading-[1.6] text-slate-900 ${seite.text.length < 150 ? 'text-2xl md:text-3xl lg:text-4xl' : (seite.text.length < 250 ? 'text-xl md:text-2xl lg:text-3xl' : 'text-base md:text-lg lg:text-xl')}`}>{seite.text}</p>
+                                   
+                                   {/* Multiple Choice interactive block */}
+                                   {seite.choices && seite.choices.length > 0 && (
+                                     <div className="mt-8 w-full max-w-xl space-y-3 z-10">
+                                       {!seite.selectedChoiceId ? (
+                                         <>
+                                           <div className="text-center text-xs font-bold uppercase tracking-wider text-amber-600 flex items-center justify-center gap-1">
+                                             <span>✨</span> Wie soll die Geschichte weitergehen? <span>✨</span>
+                                           </div>
+                                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                             {seite.choices.map((choice: any) => (
+                                               <button
+                                                 key={choice.id}
+                                                 onClick={() => handleSelectChoice(idx, choice.id)}
+                                                 className="bg-white hover:bg-indigo-50/50 border-2 border-slate-200 hover:border-indigo-500 text-slate-800 p-4 rounded-2xl font-bold text-sm shadow-sm transition-all duration-300 hover:scale-[1.02] flex flex-col justify-center items-center text-center cursor-pointer min-h-[80px]"
+                                               >
+                                                 {choice.text}
+                                               </button>
+                                             ))}
+                                           </div>
+                                         </>
+                                       ) : (
+                                         (() => {
+                                           const chosenChoice = seite.choices.find((c: any) => c.id === seite.selectedChoiceId);
+                                           if (!chosenChoice) return null;
+                                           return (
+                                             <div className="p-5 bg-indigo-50/70 border border-indigo-100 rounded-2xl text-center z-10 transition-all">
+                                               <div className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest mb-2">
+                                                 🌟 DEINE ENTSCHEIDUNG: "{chosenChoice.text}" 🌟
+                                               </div>
+                                               <p className="font-serif text-slate-800 leading-[1.6] text-sm md:text-base">
+                                                 {chosenChoice.resultText}
+                                               </p>
+                                               <button
+                                                 onClick={() => handleSelectChoice(idx, "")}
+                                                 className="mt-3 text-[10px] text-indigo-400 hover:text-indigo-750 transition-colors cursor-pointer underline font-bold"
+                                               >
+                                                 Entscheidung ändern
+                                               </button>
+                                             </div>
+                                           );
+                                         })()
+                                       )}
+                                     </div>
+                                   )}
                                    <button 
                                       className="absolute top-6 right-6 bg-theme-primary-soft text-theme-primary rounded-full w-10 h-10 flex items-center justify-center hover:bg-theme-primary-border transition cursor-pointer"
                                       onClick={() => { setEditingPageIdx(idx); setEditingText(seite.text); }}
@@ -3096,6 +3596,52 @@ Your output MUST have exactly this JSON format:
                       ) : (
                         <>
                           <p className="text-lg md:text-xl flex-1 pr-6">{seite.text}</p>
+                          
+                          {/* Multiple Choice interactive block for stacked view */}
+                          {seite.choices && seite.choices.length > 0 && (
+                            <div className="mt-4 w-full space-y-3 z-10 text-slate-900">
+                              {!seite.selectedChoiceId ? (
+                                <>
+                                  <div className="text-left text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1">
+                                    <span>✨</span> Wie soll die Geschichte weitergehen? <span>✨</span>
+                                  </div>
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                    {seite.choices.map((choice: any) => (
+                                      <button
+                                        key={choice.id}
+                                        onClick={() => handleSelectChoice(idx, choice.id)}
+                                        className="bg-slate-700 hover:bg-slate-600 border border-slate-600 hover:border-indigo-400 text-white p-3 rounded-xl font-bold text-sm shadow-sm transition-all duration-300 hover:scale-[1.01] flex flex-col justify-center items-center text-center cursor-pointer min-h-[60px]"
+                                      >
+                                        {choice.text}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </>
+                              ) : (
+                                (() => {
+                                  const chosenChoice = seite.choices.find((c: any) => c.id === seite.selectedChoiceId);
+                                  if (!chosenChoice) return null;
+                                  return (
+                                    <div className="p-4 bg-slate-750 border border-slate-700 rounded-xl text-center z-10 transition-all text-white">
+                                      <div className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest mb-1">
+                                        🌟 DEINE ENTSCHEIDUNG: "{chosenChoice.text}" 🌟
+                                      </div>
+                                      <p className="font-serif text-slate-200 leading-[1.5] text-sm">
+                                        {chosenChoice.resultText}
+                                      </p>
+                                      <button
+                                        onClick={() => handleSelectChoice(idx, "")}
+                                        className="mt-2 text-[10px] text-slate-400 hover:text-slate-200 transition-colors cursor-pointer underline font-bold"
+                                      >
+                                        Entscheidung ändern
+                                      </button>
+                                    </div>
+                                  );
+                                })()
+                              )}
+                            </div>
+                          )}
+
                           <button 
                             className="absolute top-4 right-4 bg-slate-700 rounded-full w-8 h-8 flex items-center justify-center text-sm opacity-50 hover:opacity-100 transition cursor-pointer z-20"
                             onClick={() => { setEditingPageIdx(idx); setEditingText(seite.text); }}
@@ -3194,6 +3740,64 @@ Your output MUST have exactly this JSON format:
         </div>
       )}
 
+      {/* iOS PWA Install Guide Modal */}
+      {showIosInstallModal && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/60 backdrop-blur-md p-4 animate-in fade-in duration-300">
+          <div className="bg-theme-card rounded-[40px] p-8 max-w-sm w-full shadow-2xl relative border-4 border-theme-primary-softer text-center">
+            
+            {/* Mascot Icon */}
+            <div className="w-20 h-20 bg-theme-primary-soft rounded-full flex items-center justify-center mx-auto mb-4 text-4xl animate-bounce" style={{ animationDuration: '3s' }}>
+              🦝
+            </div>
+
+            <h3 className="text-xl font-bold text-theme-title mb-2">
+              {language === 'de' ? 'Fably als PWA App installieren' : 'Install Fably as a PWA App'}
+            </h3>
+            <p className="text-xs text-theme-muted mb-6 leading-relaxed">
+              {language === 'de' 
+                ? 'Nutze Fably wie eine echte App! Schnellerer Zugriff und ein wunderschönes Vollbild auf deinem iPhone.'
+                : 'Enjoy Fably as a full native app! Faster access and a magical fullscreen view on your phone.'}
+            </p>
+
+            <div className="space-y-4 text-left mb-6 text-sm">
+              <div className="flex gap-3 items-center bg-theme-bg-soft p-3 rounded-2xl border border-theme-border">
+                <span className="text-xl bg-theme-card w-8 h-8 rounded-xl flex items-center justify-center shadow-sm">📤</span>
+                <p className="text-xs font-semibold text-theme-base">
+                  {language === 'de' 
+                    ? '1. Tippe unten auf das Teilen-Symbol in Safari.' 
+                    : '1. Tap the Share button at the bottom of Safari.'}
+                </p>
+              </div>
+
+              <div className="flex gap-3 items-center bg-theme-bg-soft p-3 rounded-2xl border border-theme-border">
+                <span className="text-xl bg-theme-card w-8 h-8 rounded-xl flex items-center justify-center shadow-sm">➕</span>
+                <p className="text-xs font-semibold text-theme-base">
+                  {language === 'de' 
+                    ? '2. Scrolle nach unten und tippe auf "Zum Home-Bildschirm".' 
+                    : '2. Scroll down and tap "Add to Home Screen".'}
+                </p>
+              </div>
+
+              <div className="flex gap-3 items-center bg-theme-bg-soft p-3 rounded-2xl border border-theme-border">
+                <span className="text-xl bg-theme-card w-8 h-8 rounded-xl flex items-center justify-center shadow-sm">🪄</span>
+                <p className="text-xs font-semibold text-theme-base">
+                  {language === 'de' 
+                    ? '3. Tippe auf "Hinzufügen" und starte dein magisches Abenteuer!' 
+                    : '3. Tap "Add" and start your magical adventure!'}
+                </p>
+              </div>
+            </div>
+
+            <button 
+              onClick={() => setShowIosInstallModal(false)}
+              className="w-full bg-theme-primary text-white font-bold py-3 px-6 rounded-full shadow-md hover:shadow-lg transition-all cursor-pointer"
+            >
+              {language === 'de' ? 'Verstanden, danke!' : 'Got it, thanks!'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Label Edit Modal */}
       {isEditingLabels && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
@@ -3262,26 +3866,34 @@ Your output MUST have exactly this JSON format:
           )}
           <div className="flex flex-col gap-2 p-4 flex-1 overflow-y-auto">
             <button onClick={() => { setActiveTab('create'); setIsMobileMenuOpen(false); }} className={`p-4 font-bold rounded-2xl flex items-center gap-3 transition-colors text-left ${activeTab === 'create' ? 'bg-theme-primary-soft text-theme-primary-strong' : 'bg-theme-bg-soft text-theme-muted hover:bg-theme-bg-softer'}`}>
-              <span className="text-xl">📖</span> Neue Geschichte
+              <span className="text-xl">📖</span> {t('dashboard.new_story')}
             </button>
             <button onClick={() => { setActiveTab('avatars'); setIsMobileMenuOpen(false); }} className={`p-4 font-bold rounded-2xl flex items-center gap-3 transition-colors text-left ${activeTab === 'avatars' ? 'bg-theme-primary-soft text-theme-primary-strong' : 'bg-theme-bg-soft text-theme-muted hover:bg-theme-bg-softer'}`}>
-              <span className="text-xl">🦸</span> Helden-Galerie
+              <span className="text-xl">🦸</span> {t('heroes.title')}
             </button>
             <button onClick={() => { setActiveTab('library'); setIsMobileMenuOpen(false); }} className={`p-4 font-bold rounded-2xl flex items-center gap-3 transition-colors text-left ${activeTab === 'library' ? 'bg-theme-primary-soft text-theme-primary-strong' : 'bg-theme-bg-soft text-theme-muted hover:bg-theme-bg-softer'}`}>
-              <span className="text-xl">📜</span> Meine Kurzskripte <span className="ml-auto bg-theme-card/50 px-2 py-0.5 rounded-full text-xs">{allBooks.length}</span>
+              <span className="text-xl">📜</span> {t('dashboard.my_scripts')} <span className="ml-auto bg-theme-card/50 px-2 py-0.5 rounded-full text-xs">{allBooks.length}</span>
             </button>
             <button onClick={() => { setActiveTab('books'); setIsMobileMenuOpen(false); }} className={`p-4 font-bold rounded-2xl flex items-center gap-3 transition-colors text-left ${activeTab === 'books' ? 'bg-theme-primary-soft text-theme-primary-strong' : 'bg-theme-bg-soft text-theme-muted hover:bg-theme-bg-softer'}`}>
-              <span className="text-xl">📚</span> Bücher <span className="ml-auto bg-theme-card/50 px-2 py-0.5 rounded-full text-xs">{allFinishedBooks.length}</span>
+              <span className="text-xl">📚</span> {t('dashboard.my_books')} <span className="ml-auto bg-theme-card/50 px-2 py-0.5 rounded-full text-xs">{allFinishedBooks.length}</span>
             </button>
             
             <div className="h-px bg-theme-bg-softer my-2" />
             
             <button onClick={() => { setIsEditingLabels(true); setIsMobileMenuOpen(false); }} className="p-4 font-bold rounded-2xl flex items-center gap-3 bg-theme-bg-soft text-theme-muted hover:bg-theme-bg-softer transition-colors text-left">
-              <span className="text-xl">🏷️</span> Label-Verwaltung
+              <span className="text-xl">🏷️</span> {language === 'de' ? 'Label-Verwaltung' : 'Label Management'}
             </button>
             <button onClick={() => { setIsBackupManagerOpen(true); setIsMobileMenuOpen(false); }} className="p-4 font-bold rounded-2xl flex items-center gap-3 bg-theme-bg-soft text-theme-muted hover:bg-theme-bg-softer transition-colors text-left">
               <span className="text-xl">💾</span> Backup-Manager
             </button>
+            {isInstallable && (
+              <button 
+                onClick={() => { handleInstallApp(); setIsMobileMenuOpen(false); }} 
+                className="p-4 font-bold rounded-2xl flex items-center gap-3 bg-theme-primary text-white hover:bg-theme-primary-strong transition-all text-left"
+              >
+                <span className="text-xl">📲</span> {language === 'de' ? 'App installieren' : 'Install App'}
+              </button>
+            )}
           </div>
           <div className="p-4 border-t border-theme-border">
             <button onClick={() => { signOut(auth); setIsDevMode(false); setIsMobileMenuOpen(false); }} className="w-full rounded-2xl bg-slate-800 px-6 py-4 font-bold text-white shadow-sm cursor-pointer whitespace-nowrap text-center">
